@@ -36,6 +36,7 @@ impl<const SIZE: usize> Memory<SIZE> {
     }
     async fn set8(&mut self, addr: u32, val: u8) {
         pending!();
+        println!("setting {:x} = {:x}", addr, val);
         self.data[addr as usize] = val
     }
     async fn fetch16(&self, addr: u32) -> u16 {
@@ -110,50 +111,54 @@ impl Cpu {
         val
     }
 
-    async fn fetch8(&self, offset: u32, memory: &Memory<65536>, a: Addressing) -> u8 {
+    async fn calc_addr(&self, offset: u32, memory: &Memory<65536>, a: Addressing) -> u16 {
         match a {
-            Addressing::Immediate => memory.fetch8(self.pc as u32 + offset).await,
-            Addressing::Absolute => {
-                let addr = memory.fetch16(self.pc as u32 + offset).await as u32;
-                memory.fetch8(addr).await
-            }
-            Addressing::AbsoluteX => {
-                //pending!();
-                let addr = memory.fetch16(self.pc as u32 + offset).await + self.x as u16;
-                memory.fetch8(addr as u32).await
-            }
-            Addressing::AbsoluteY => {
-                //pending!();
-                let addr = memory.fetch16(self.pc as u32 + offset).await + self.y as u16;
-                memory.fetch8(addr as u32).await
-            }
-            Addressing::ZeroPage => memory.indirect_fetch8(self.pc as u32 + offset).await,
-            Addressing::ZeroPageX => {
+            Addressing::Immediate   => self.pc + offset as u16,
+            Addressing::Absolute    => memory.fetch16(self.pc as u32 + offset).await,
+            Addressing::AbsoluteX   => memory.fetch16(self.pc as u32 + offset).await + self.x as u16,
+            Addressing::AbsoluteY   => memory.fetch16(self.pc as u32 + offset).await + self.y as u16,
+            Addressing::ZeroPage    => memory.fetch8(self.pc as u32 + offset).await as u16,
+            Addressing::ZeroPageX   => {
+                pending!(); 
+                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u16
+            },
+            Addressing::ZeroPageY   => {
                 pending!();
-                memory.fetch8(memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u32).await
+                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.y) as u16
             },
-            Addressing::ZeroPageY => {
-                pending!();
-                memory.fetch8(memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.y) as u32).await
-            },
-            Addressing::Indirect => {
-                let addr = memory.fetch16(self.pc as u32 + offset).await as u32;
-                let addr2 = memory.fetch16(addr as u32).await as u32;
-                memory.fetch8(addr2).await
-            },
-            Addressing::IndirectX => {
+            Addressing::Indirect    => memory.fetch16(memory.fetch16(self.pc as u32 + offset).await as u32).await,
+            Addressing::IndirectX   => {
                 let addr = memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u32;
-                let addr2 = memory.fetch16(addr as u32).await as u32;
-                memory.fetch8(addr2).await
+                memory.fetch16(addr as u32).await
             },
-            Addressing::IndirectY => {
+            Addressing::IndirectY   => {
                 let addr = memory.fetch8(self.pc as u32 + offset).await;
-                let addr2 = memory.fetch16(addr as u32).await as u32 + self.y as u32;
-                memory.fetch8(addr2).await
+                memory.fetch16(addr as u32).await + self.y as u16
             },
             Addressing::Accumulator => unreachable!("this is not how it works"),
-            Addressing::Implied => unreachable!("no"),
+            Addressing::Implied     => unreachable!("no"),
         }
+    }
+
+    async fn load8(&self, offset: u32, memory: &Memory<65536>, s: Addressing) -> u8 {
+        memory.fetch8(self.calc_addr(offset, memory, s).await as u32).await
+    }
+
+    async fn store8(&self, offset: u32, memory: &mut Memory<65536>, s: Addressing, val: u8) {
+        memory.set8(self.calc_addr(offset, memory, s).await as u32, val).await
+    }
+
+    async fn push8(&mut self, memory: &mut Memory<65536>, val: u8) {
+        memory.set8(0x0100 | self.sp as u32, val).await;
+        self.sp -= 1;
+        pending!();
+    }
+
+    async fn pull8(&mut self, memory: &Memory<65536>) -> u8 {
+        self.sp += 1;
+        pending!();
+        pending!();
+        memory.fetch8(0x0100 | self.sp as u32).await
     }
 
     async fn run(&mut self, memory: &mut Memory<65536>, instructions: Option<NonZeroU64>) {
@@ -166,21 +171,36 @@ impl Cpu {
 
         let mut instructions: Option<u64> = instructions.map(|v| v.into());
         loop {
+            let mut jumpto = None;
             use un6502::DatalessInstruction;
             use un6502::Opcode;
             
             let inst = un6502::decode_u8(memory.fetch8(self.pc as u32).await);
             println!("Running {:?}", inst);
             match inst.opcode() {
-                Opcode::Lda => self.a = self.update_zn(self.fetch8(1, &memory, inst.addressing()).await),
-                Opcode::Ldx => self.x = self.update_zn(self.fetch8(1, &memory, inst.addressing()).await),
-                Opcode::Ldy => self.y = self.update_zn(self.fetch8(1, &memory, inst.addressing()).await),
+                Opcode::Lda => self.a = self.update_zn(self.load8(1, &memory, inst.addressing()).await),
+                Opcode::Ldx => self.x = self.update_zn(self.load8(1, &memory, inst.addressing()).await),
+                Opcode::Ldy => self.y = self.update_zn(self.load8(1, &memory, inst.addressing()).await),
+                Opcode::Stx => { self.store8(1, memory, inst.addressing(), self.x).await; },
                 Opcode::Tax => { pending!(); self.x = self.update_zn(self.a); },
                 Opcode::Tay => { pending!(); self.y = self.update_zn(self.a); },
                 Opcode::Txs => { pending!(); self.sp = self.x; },
+                Opcode::Txa => { pending!(); self.a = self.update_zn(self.x); },
+                Opcode::Cld => { pending!(); self.flags.set_decimal(false); }
+                Opcode::Sei => { pending!(); self.flags.set_irq_disable(true); }
                 Opcode::Jmp => {
                     let (lo, hi) = (memory.fetch8(self.pc as u32 + 1).await, memory.fetch8(self.pc as u32 + 2).await);
                     self.pc = u16::from_le_bytes([lo, hi]) - 2;
+                },
+                Opcode::Pla => self.a = self.pull8(memory).await,
+                Opcode::Pha => self.push8(memory, self.a).await,
+                Opcode::Jsr => {
+                    self.push8(memory, (((self.pc + 2) & 0xff00) >> 8) as u8).await;
+                    self.push8(memory, ((self.pc + 2) & 0x00ff) as u8).await;
+                    jumpto = Some(u16::from_le_bytes([memory.fetch8(self.pc as u32 + 1).await, memory.fetch8(self.pc as u32 + 2).await]));
+                },
+                Opcode::Rti => {
+                    jumpto = Some(u16::from_le_bytes([self.pull8(memory).await, self.pull8(memory).await]));
                 },
                 Opcode::Brk => return,
             }
@@ -191,7 +211,14 @@ impl Cpu {
                 }
                 *cnt -= 1;
             }
-            self.pc += inst.len();
+            if let Some(pc) = jumpto {
+                self.pc = pc;
+                jumpto = None;
+            } else {
+                self.pc += inst.len();
+            }
+
+            println!("CPU State now: {:#x?}", self);
         }
     }
 }
@@ -205,15 +232,28 @@ async fn run() -> u64 {
     let rom002 = include_bytes!("002.rom");
     let rom003 = include_bytes!("003.rom");
 
-    memory.copyfrom_fast(0x1c00, rom002);
-    memory.copyfrom_fast(0x1800, rom003);
+    let kim1 = true;
+    if kim1 {
+        memory.copyfrom_fast(0x1c00, rom002);
+        memory.copyfrom_fast(0x1800, rom003);
 
-    memory.set8_fast(0xfffa, 0x00);
-    memory.set8_fast(0xfffb, 0x1c);
-    memory.set8_fast(0xfffc, 0x22);
-    memory.set8_fast(0xfffd, 0x1c);
-    memory.set8_fast(0xfffe, 0x1f);
-    memory.set8_fast(0xffff, 0x1c);
+        memory.set8_fast(0xfffa, 0x00);
+        memory.set8_fast(0xfffb, 0x1c);
+        memory.set8_fast(0xfffc, 0x22);
+        memory.set8_fast(0xfffd, 0x1c);
+        memory.set8_fast(0xfffe, 0x1f);
+        memory.set8_fast(0xffff, 0x1c);
+    } else {
+        memory.set8_fast(0xfffc, 0x20);
+        memory.set8_fast(0xfffd, 0x20);
+
+        memory.set8_fast(0x2020, 0xa9);
+        memory.set8_fast(0x2021, 0x69);
+        memory.set8_fast(0x2022, 0x48);
+        memory.set8_fast(0x2023, 0xa9);
+        memory.set8_fast(0x2024, 0x00);
+        memory.set8_fast(0x2025, 0x68);
+    }
 
     {
         let mut cpu_future = pin!(cpu.run(&mut memory, None));

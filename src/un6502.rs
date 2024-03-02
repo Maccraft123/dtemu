@@ -16,11 +16,19 @@ pub enum Opcode {
     Lda,
     Ldx,
     Ldy,
+    Stx,
     Tax,
     Tay,
     Txs,
+    Txa,
     Jmp,
     Brk,
+    Pha,
+    Pla,
+    Jsr,
+    Cld,
+    Sei,
+    Rti,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -33,13 +41,13 @@ impl DatalessInstruction {
         use Opcode::*;
         use super::Addressing::*;
         match self.0 {
-            Lda | Ldx | Ldy => match self.1 {
+            Lda | Ldx | Ldy | Stx | Jsr => match self.1 {
                 Absolute | AbsoluteX | AbsoluteY => 3,
                 Immediate | ZeroPage | ZeroPageX | IndirectX | IndirectY => 2,
                 other => panic!("invalid addressing {:?} for {:?}", other, self.0),
             },
             Jmp => 3,
-            Brk | Tax | Tay | Txs => 1,
+            Brk | Tax | Tay | Txs | Pha | Pla | Txa | Cld | Sei | Rti => 1,
         }
     }
 }
@@ -57,27 +65,22 @@ pub fn decode_u8(val: u8) -> DatalessInstruction {
     println!("{:x} is {} {} {}", val, raw.a(), raw.b(), raw.c());
     match (raw.a(), raw.b(), raw.c()) {
         (0, 0, 0) => di(Brk, Implied),
-        //(1, 0, 0) => di(Jsr, Implied),
-        //(2, 0, 0) => di(Rti, Implied),
-        //(3, 0, 0) => di(Rts, Implied),
-        //(4 0, 0) => ,
-        //(5, 0, 0) => di(Ldy, Immediate),
-        //(6, 0, 0) => di(Cpy, Immediate),
-        //(7, 0, 0) => di(Cpx, Immediate),
-        //(0, 1, 0) => ,
-        //(1, 1, 0) => di(Bit, ZeroPage),
-        ////(2, 1, 0)
-        //(3, 1, 0)
-        //(4, 1, 0) => di(Sty, ZeroPage),
-        //(5, 1, 0) => di(Ldy, ZeroPage),
-        //(6, 1, 0) => di(Cpy, ZeroPage),
-        //(7, 1, 0) => di(Cpx, ZeroPage),
-        //(0, 2, 0) => di(Php, Implied),
-        //(1, 2, 0) => di(Plp, Implied),
-        //(2, 2, 0) => di(Pha, Implied),
-        
-        (4, 6, 2) => di(Txs, Implied),
+        (1, 0, 0) => di(Jsr, Absolute),
+        (2, 2, 0) => di(Pha, Implied),
+        (3, 0, 0) => di(Rti, Implied),
+        (3, 2, 0) => di(Pla, Implied),
 
+        (3, 6, 0) => di(Sei, Implied),
+
+        //(4, 0, 2) => illegal!
+        (4, 1, 2) => di(Stx, ZeroPage),
+        (4, 2, 2) => di(Txa, Implied),
+        (4, 3, 2) => di(Stx, Absolute),
+        //(4, 4, 2) => illegal!
+        (4, 5, 2) => di(Stx, ZeroPageY),
+        (4, 6, 2) => di(Txs, Implied),
+        //(4, 7, 2) => illegal!
+        
         (5, 2, 0) => di(Tay, Implied),
 
         (5, 0, 1) => di(Lda, IndirectX),
@@ -106,6 +109,8 @@ pub fn decode_u8(val: u8) -> DatalessInstruction {
         (5, 5, 0) => di(Ldy, ZeroPageX),
         //(5, 6, 0) => di(Clv, Implied),
         (5, 6, 0) => di(Ldy, AbsoluteX),
+
+        (6, 6, 0) => di(Cld, Implied),
 
         (2, 3, 0) => di(Jmp, Absolute),
         other => panic!("unknown/invalid opcode {:?}/{:x}", other, val),

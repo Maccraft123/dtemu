@@ -16,11 +16,16 @@ pub enum Opcode {
     Lda,
     Ldx,
     Ldy,
+    Sta,
     Stx,
+    Sty,
     Tax,
     Tay,
     Txs,
     Txa,
+    Tya,
+    Dey,
+    Bcc,
     Jmp,
     Brk,
     Pha,
@@ -29,6 +34,41 @@ pub enum Opcode {
     Cld,
     Sei,
     Rti,
+    Asl,
+    Lsr,
+    Bit,
+    Bne,
+    Beq,
+    Inx,
+    Ora,
+    And,
+    Eor,
+    Adc,
+    Cmp,
+    Sbc,
+    Rts,
+    Bvs,
+    Bvc,
+    Bpl,
+    Bmi,
+    Bcs,
+    Sed,
+    Sec,
+    Clv,
+    Cli,
+    Clc,
+    Iny,
+    Dex,
+    Tsx,
+    Nop,
+    Rol,
+    Ror,
+    Cpx,
+    Cpy,
+    Plp,
+    Php,
+    Dec,
+    Inc,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -40,15 +80,29 @@ impl DatalessInstruction {
     pub fn len(&self) -> u16 {
         use Opcode::*;
         use super::Addressing::*;
-        match self.0 {
-            Lda | Ldx | Ldy | Stx | Jsr => match self.1 {
-                Absolute | AbsoluteX | AbsoluteY => 3,
-                Immediate | ZeroPage | ZeroPageX | IndirectX | IndirectY => 2,
-                other => panic!("invalid addressing {:?} for {:?}", other, self.0),
-            },
-            Jmp => 3,
-            Brk | Tax | Tay | Txs | Pha | Pla | Txa | Cld | Sei | Rti => 1,
-        }
+        //match self.0 {
+            //Lda | Ldx | Ldy | Sta | Stx | Sty | Tax | Tay | Tsx | Txa | Txs | Tya |
+                //Adc | Sbc |
+                //And | Eor | Ora |
+                //Asl | Lsr |
+                //Cmp |
+                //Bcc | Bcs | Beq | Bmi | Bne | Bpl | Bvc | Bvs |
+                //Jmp | Jsr |
+                //Bit =>
+                match self.1 {
+                    Absolute | AbsoluteX | AbsoluteY => 3,
+                    Relative | Immediate | ZeroPage | ZeroPageX | ZeroPageY => 2,
+                    Indirect | IndirectX | IndirectY => 2,
+                    Accumulator | Implied => 1,
+                }
+            //Pha | Pla |
+            //    Dex | Dey | Inx | Iny |
+            //    Clc | Cld | Cli | Clv | Sec | Sed | Sei |
+            //    Rts | 
+            //    Brk | Rti |
+            //    Nop
+            //    => 1,
+        //}
     }
 }
 
@@ -59,60 +113,150 @@ fn di(opcode: Opcode, addressing: Addressing) -> DatalessInstruction {
 pub fn decode_u8(val: u8) -> DatalessInstruction {
     use Opcode::*;
     use super::Addressing::*;
-
     let raw = RawOpcode::from(val);
-
-    println!("{:x} is {} {} {}", val, raw.a(), raw.b(), raw.c());
     match (raw.a(), raw.b(), raw.c()) {
-        (0, 0, 0) => di(Brk, Implied),
-        (1, 0, 0) => di(Jsr, Absolute),
-        (2, 2, 0) => di(Pha, Implied),
-        (3, 0, 0) => di(Rti, Implied),
-        (3, 2, 0) => di(Pla, Implied),
+        (a, b, 0) => {
+            let opcode = match (a, b) {
+                (0, 0) => Brk,
+                (0, 2) => Php,
+                (0, 4) => Bpl,
+                (0, 6) => Clc,
+                
+                (1, 0) => Jsr,
+                (1, 1) | (1, 3) => Bit,
+                (1, 2) => Plp,
+                (1, 4) => Bmi,
+                (1, 6) => Sec,
+                
+                (2, 0) => Rti,
+                (2, 2) => Pha,
+                (2, 3) => Jmp,
+                (2, 4) => Bvc,
+                (2, 6) => Cli,
 
-        (3, 6, 0) => di(Sei, Implied),
+                (3, 0) => Rts,
+                (3, 2) => Pla,
+                (3, 3) => Jmp,
+                (3, 4) => Bvs,
+                (3, 6) => Sei,
 
-        //(4, 0, 2) => illegal!
-        (4, 1, 2) => di(Stx, ZeroPage),
-        (4, 2, 2) => di(Txa, Implied),
-        (4, 3, 2) => di(Stx, Absolute),
-        //(4, 4, 2) => illegal!
-        (4, 5, 2) => di(Stx, ZeroPageY),
-        (4, 6, 2) => di(Txs, Implied),
-        //(4, 7, 2) => illegal!
-        
-        (5, 2, 0) => di(Tay, Implied),
+                (4, _) if b % 2 != 0 => Sty,
+                (4, 2) => Dey,
+                (4, 4) => Bcc,
+                (4, 6) => Tya,
 
-        (5, 0, 1) => di(Lda, IndirectX),
-        (5, 1, 1) => di(Lda, ZeroPage),
-        (5, 2, 1) => di(Lda, Immediate),
-        (5, 3, 1) => di(Lda, Absolute),
-        (5, 4, 1) => di(Lda, IndirectY),
-        (5, 5, 1) => di(Lda, ZeroPageX),
-        (5, 6, 1) => di(Lda, AbsoluteY),
-        (5, 7, 1) => di(Lda, AbsoluteX),
 
-        (5, 0, 2) => di(Ldx, Immediate),
-        (5, 1, 2) => di(Ldx, ZeroPage),
-        (5, 2, 2) => di(Tax, Implied),
-        (5, 3, 2) => di(Ldx, Absolute),
-        //(5, 4, 2) => di(JamB2, Implied),
-        (5, 5, 2) => di(Ldx, ZeroPageY),
-        //(5, 5, 2) => di(Tsx, Implied),
-        (5, 6, 2) => di(Ldx, AbsoluteY),
+                (5, 0) => Ldy,
+                (5, _) if b % 2 != 0 => Ldy,
+                (5, 2) => Tay,
+                (5, 4) => Bcs,
+                (5, 6) => Clv,
 
-        (5, 0, 0) => di(Ldy, Immediate),
-        (5, 1, 0) => di(Ldy, ZeroPage),
-        //(5, 2, 0) => di(Tay, Implied),
-        (5, 3, 0) => di(Ldy, Absolute),
-        //(5, 4, 0) => di(Bcs, Relative),
-        (5, 5, 0) => di(Ldy, ZeroPageX),
-        //(5, 6, 0) => di(Clv, Implied),
-        (5, 6, 0) => di(Ldy, AbsoluteX),
+                (6, 0) | (6, 1) | (6, 3) => Cpy,
+                (6, 2) => Iny,
+                (6, 4) => Bne,
+                (6, 6) => Cld,
 
-        (6, 6, 0) => di(Cld, Implied),
+                (7, 0) | (7, 1) | (7, 3) => Cpx,
+                (7, 2) => Inx,
+                (7, 4) => Beq,
+                (7, 6) => Sed,
 
-        (2, 3, 0) => di(Jmp, Absolute),
+                other => unimplemented!("missing {:?} for c == 0", other),
+            };
+            let addressing = match b {
+                0 if a == 1 => Absolute,
+                0 if a >= 4 => Immediate,
+                0 => Implied,
+                1 => ZeroPage,
+                2 => Implied,
+                3 if a == 3 => Indirect,
+                3 => Absolute,
+                4 => Relative,
+                5 => ZeroPageX,
+                6 => Implied,
+                7 => AbsoluteX,
+                _ => unreachable!(),
+            };
+            di(opcode, addressing)
+        },
+
+        (a, b, 1) => {
+            let opcode = match a {
+                0 => Ora,
+                1 => And,
+                2 => Eor,
+                3 => Adc,
+                4 => Sta,
+                5 => Lda,
+                6 => Cmp,
+                7 => Sbc,
+                _ => unreachable!(),
+            };
+            let addressing = match b {
+                0 => IndirectX,
+                1 => ZeroPage,
+                2 => Immediate,
+                3 => Absolute,
+                4 => IndirectY,
+                5 => ZeroPageX,
+                6 => AbsoluteY,
+                7 => AbsoluteX,
+                _ => unreachable!(),
+            };
+            di(opcode, addressing)
+        },
+
+        (a, b, 2) if a < 4 => {
+            let opcode = match a {
+                0 => Asl,
+                1 => Rol,
+                2 => Lsr,
+                3 => Ror,
+                _ => unreachable!(),
+            };
+            let addressing = match b {
+                0 => Immediate,
+                1 => ZeroPage,
+                2 => Accumulator,
+                3 => Absolute,
+                4 => unimplemented!(),
+                5 => ZeroPageX,
+                6 => unimplemented!(),
+                7 => AbsoluteX,
+                _ => unreachable!(),
+            };
+            di(opcode, addressing)
+        },
+        (a, b, 2) if a >= 4 => {
+            let opcode = match (a, b) {
+                (4, _) if b % 2 != 0 => Stx,
+                (4, 2) => Txa,
+                (4, 6) => Txs,
+                (5, 2) => Tax,
+                (5, 6) => Tsx,
+                (5, _) => Ldx,
+                (6, 2) => Dex,
+                (6, _) => Dec,
+                (7, 2) => Nop,
+                (7, _) => Inc,
+                other => unimplemented!("missing {:?} for c == 2", other),
+            };
+            let addressing = match b {
+                0 => Immediate,
+                1 => ZeroPage,
+                2 => Implied,
+                3 => Absolute,
+                4 => unimplemented!(),
+                5 if a == 4 || a == 5 => ZeroPageY,
+                5 if a == 6 || a == 7 => ZeroPageX,
+                6 => Implied,
+                7 if a == 4 || a == 5 => AbsoluteY,
+                7 if a == 6 || a == 7 => AbsoluteX,
+                _ => unreachable!(),
+            };
+            di(opcode, addressing)
+        }
         other => panic!("unknown/invalid opcode {:?}/{:x}", other, val),
     }
 }

@@ -1,0 +1,42 @@
+/dts-v1/;
+
+/ {
+	compatible = "apple,1", "mos,6502";
+	model = "apple,1";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "mos,6502";
+			reg = <0 0>;
+			clocks = <&builtin_6502_clk>;
+
+		};
+	};
+	
+	builtin_6502_clk: clock {
+		compatible = "mos,6502-builtin-clk", "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <1000000>;
+	};
+
+	memory@0 {
+		compatible = "memory";
+		reg = <0x0 0x8000>;
+	};
+
+	pia@d010 {
+		compatible = "motorola,mc6821";
+		reg = <0xd010 0x4>;
+	};
+
+	rom@e000 {
+		compatible = "generic-rom";
+		rom,name = "rc6502_8k";
+		reg = <0xe000 0x1fff>;
+	};
+};

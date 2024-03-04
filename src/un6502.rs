@@ -257,6 +257,7 @@ pub fn decode_u8(val: u8) -> DatalessInstruction {
             };
             di(opcode, addressing)
         }
+        (7, 2, 3) => di(Sbc, Immediate),
         other => panic!("unknown/invalid opcode {:?}/{:x}", other, val),
     }
 }

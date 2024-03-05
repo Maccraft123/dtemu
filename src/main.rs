@@ -1,11 +1,13 @@
 use bitfield_struct::bitfield;
 use core::pin::pin;
 use futures::{pending, poll};
-use std::future;
-use std::num::NonZeroU64;
+use std::io::{Write, self};
+use std::sync::mpsc;
 
 mod devices;
 mod un6502;
+
+use devices::{Mmio};
 
 struct MemoryWrapper {
     ptr: Arc<Mutex<MemoryMap>>,
@@ -15,12 +17,12 @@ impl MemoryWrapper {
     fn new(ptr: Arc<Mutex<MemoryMap>>) -> Self {
         Self { ptr }
     }
-    fn set8_fast(&self, addr: u32, val: u8) {
-        self.ptr.lock().write8(addr, val)
-    }
-    fn fetch8_fast(&self, addr: u32) -> u8 {
-        self.ptr.lock().read8(addr)
-    }
+    //fn set8_fast(&self, addr: u32, val: u8) {
+    //    self.ptr.lock().write8(addr, val)
+    //}
+    //fn fetch8_fast(&self, addr: u32) -> u8 {
+    //    self.ptr.lock().read8(addr)
+    //}
     async fn fetch8(&self, addr: u32) -> u8 {
         pending!();
         self.ptr.lock().read8(addr)
@@ -160,7 +162,6 @@ impl Cpu {
     async fn push8(&mut self, memory: &MemoryWrapper, val: u8) {
         memory.set8(0x0100 | self.sp as u32, val).await;
         self.sp -= 1;
-        println!("pushed {:x} onto stack", val);
         pending!();
     }
 
@@ -169,7 +170,6 @@ impl Cpu {
         pending!();
         pending!();
         let val = memory.fetch8(0x0100 | self.sp as u32).await;
-        println!("pulled {:x} from stack", val);
         val
     }
 
@@ -188,7 +188,6 @@ impl Cpu {
     }
 
     fn cmp_helper(&mut self, reg: u8, val: u8) {
-        println!("cmp {:x} {:x}",  reg, val);
         if reg == val {
             self.flags.set_negative(false);
             self.flags.set_zero(true);
@@ -217,7 +216,7 @@ impl Cpu {
         self.a = self.update_zn(result);
     }
 
-    async fn run(&mut self, memory: MemoryWrapper, instructions: Option<NonZeroU64>) {
+    async fn run(&mut self, memory: MemoryWrapper) {
         // pretend to do the init stuff
         pending!(); pending!();
         pending!(); pending!();
@@ -231,7 +230,6 @@ impl Cpu {
             
             let inst = un6502::decode_u8(memory.fetch8(self.pc as u32).await);
 
-            let asdf: u8 = self.flags.into();
             //println!("{:02x} {:04x} {:?} A:{:02x} X:{:02x} Y:{:02x} P:{:02x} SP:{:02x}", memory.fetch8_fast(self.pc as u32), self.pc, inst.opcode(), self.a, self.x, self.y, asdf, self.sp);
             //println!("Running {:?}", inst);
             match inst.opcode() {
@@ -382,10 +380,6 @@ impl Cpu {
             }
 
             self.pc = jumpto.unwrap_or(self.pc + inst.len());
-
-            if let Some(pc) = jumpto {
-                //println!("and off we go to {:x}", pc);
-            }
         }
     }
 }
@@ -394,17 +388,23 @@ async fn run(mut mach: Machine) -> u64 {
     let mut cycles = 0;
 
     {
-        let mut cpu_future = pin!(mach.cpu.run(mach.new_mem_wrapper(), None));
+        let mut cpu_future = pin!(mach.cpu.run(mach.new_mem_wrapper()));
+        let mut stdout = io::stdout().lock();
 
         loop {
             if poll!(&mut cpu_future).is_ready() {
                 break;
+            }
+            if let Ok(data) = mach.console_in.try_recv() {
+                let _ = write!(stdout, "{}", data);
+                let _ = stdout.flush();
             }
             cycles += 1;
         }
         cycles -= 1;
     }
 
+    println!("");
     println!("CPU state on exit: {:#x?}", mach.cpu);
     println!("{} cycles done", cycles - 2);
     cycles
@@ -416,16 +416,7 @@ use std::fs;
 use std::sync::Arc;
 use parking_lot::Mutex;
 use fdt_rs::prelude::*;
-use fdt_rs::base::{DevTree, DevTreeNode};
-
-trait Mmio: core::fmt::Debug {
-    fn read8(&mut self, addr: u32) -> u8;
-    fn write8(&mut self, addr: u32, val: u8);
-    fn new(compats: &[&str], reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> where Self: Sized;
-    fn tick(&mut self, mem: Arc<Mutex<MemoryMap>>) {}
-    fn firmware_name(&mut self) -> Option<&str> { None }
-    fn load_firmware(&mut self, fw: &[u8]) {}
-}
+use fdt_rs::base::DevTree;
 
 #[derive(Debug)]
 struct MemoryMap {
@@ -436,7 +427,7 @@ impl MemoryMap {
     fn new() -> Self {
         Self { segments: Vec::new() }
     }
-    fn insert_device(&mut self, device: Box<dyn Mmio>, start: u32, size: u32) {
+    fn insert_mmio_device(&mut self, device: Box<dyn Mmio>, start: u32, size: u32) {
         self.segments.push(Segment{device, start, size})
     }
     fn read8(&mut self, addr: u32) -> u8 {
@@ -473,6 +464,7 @@ struct Segment {
 struct Machine {
     mem: Arc<Mutex<MemoryMap>>,
     cpu: Cpu,
+    console_in: mpsc::Receiver<char>,
 }
 
 impl Machine {
@@ -508,14 +500,14 @@ fn main() {
         }
     }
 
-    let dt_data = fs::read(&args.machine)
-        .expect("Failed to load DTB");
+    let dt_data = Align4(fs::read(&args.machine)
+        .expect("Failed to load DTB"));
 
     let devtree = unsafe {
-        assert!(dt_data.len() >= DevTree::MIN_HEADER_SIZE);
-        let size = DevTree::read_totalsize(&dt_data)
+        assert!(dt_data.0.len() >= DevTree::MIN_HEADER_SIZE);
+        let size = DevTree::read_totalsize(&dt_data.0)
             .expect("Failed to read out total DTB size");
-        let buf = &dt_data[..size];
+        let buf = &dt_data.0[..size];
         DevTree::new(buf)
             .expect("Failed creation of DevTree index")
     };
@@ -547,7 +539,7 @@ fn main() {
 
         if let Some(device) = dev {
             if let Some((start, size)) = reg {
-                mem.insert_device(device, start, size);
+                mem.insert_mmio_device(device, start, size);
             } else {
                 eprintln!("Missing reg property for {:?}", node.name());
             }
@@ -555,10 +547,12 @@ fn main() {
     }
 
     // TODO: look up the cpu
-    let mut cpu = Cpu::new();
+    let cpu = Cpu::new();
     //println!("{:#?}", mem);
 
-    for mut device in mem.segments.iter_mut().map(|s| &mut s.device) {
+    let (mut sender, receiver) = Some(mpsc::channel()).unzip();
+
+    for device in mem.segments.iter_mut().map(|s| &mut s.device) {
         if let Some(name) = device.firmware_name() {
             if let Some(data) = firmwares.get(name) {
                 device.load_firmware(&data);
@@ -566,11 +560,20 @@ fn main() {
                 eprintln!("Missing firmware for {:?}", name);
             }
         }
+
+        if let Some(condev) = device.as_console_output() {
+            if let Some(out) = sender.take() {
+                condev.attach_outchan(out);
+            } else {
+                eprintln!("Only one console device may be active at any given moment");
+            }
+        }
     }
 
     let mach = Machine {
         cpu,
         mem: Arc::new(Mutex::new(mem)),
+        console_in: receiver.unwrap(),
     };
 
     futures::executor::block_on(run(mach));

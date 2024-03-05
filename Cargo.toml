@@ -9,6 +9,8 @@ edition = "2021"
 bitfield-struct = "0.6.0"
 bitflags = "2.4.2"
 clap = { version = "4.5.1", features = ["derive"] }
+crossterm = "0.27.0"
 fdt-rs = "0.4.5"
 futures = "0.3.30"
 parking_lot = "0.12.1"
+ratatui = "0.26.1"

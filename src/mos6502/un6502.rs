@@ -78,31 +78,13 @@ impl DatalessInstruction {
     pub fn opcode(&self) -> Opcode { self.0 }
     pub fn addressing(&self) -> Addressing { self.1 }
     pub fn len(&self) -> u16 {
-        use Opcode::*;
         use super::Addressing::*;
-        //match self.0 {
-            //Lda | Ldx | Ldy | Sta | Stx | Sty | Tax | Tay | Tsx | Txa | Txs | Tya |
-                //Adc | Sbc |
-                //And | Eor | Ora |
-                //Asl | Lsr |
-                //Cmp |
-                //Bcc | Bcs | Beq | Bmi | Bne | Bpl | Bvc | Bvs |
-                //Jmp | Jsr |
-                //Bit =>
-                match self.1 {
-                    Absolute | AbsoluteX | AbsoluteY => 3,
-                    Relative | Immediate | ZeroPage | ZeroPageX | ZeroPageY => 2,
-                    Indirect | IndirectX | IndirectY => 2,
-                    Accumulator | Implied => 1,
-                }
-            //Pha | Pla |
-            //    Dex | Dey | Inx | Iny |
-            //    Clc | Cld | Cli | Clv | Sec | Sed | Sei |
-            //    Rts | 
-            //    Brk | Rti |
-            //    Nop
-            //    => 1,
-        //}
+        match self.1 {
+            Absolute | AbsoluteX | AbsoluteY => 3,
+            Relative | Immediate | ZeroPage | ZeroPageX | ZeroPageY => 2,
+            Indirect | IndirectX | IndirectY => 2,
+            Accumulator | Implied => 1,
+        }
     }
 }
 

@@ -61,7 +61,7 @@ impl Cpu {
         Self {
             pc: 0xfffc,
             sp: 0xfd,
-            a: 0,
+            a: 0xaa,
             x: 0,
             y: 0,
             flags: ProcFlags::new().with_zero(true).with_irq_disable(true),
@@ -126,12 +126,12 @@ impl Cpu {
 
     async fn push8(&mut self, memory: &MemoryWrapper, val: u8) {
         memory.set8(0x0100 | self.sp as u32, val).await;
-        self.sp -= 1;
+        self.sp = self.sp.wrapping_sub(1);
         pending!();
     }
 
     async fn pull8(&mut self, memory: &MemoryWrapper) -> u8 {
-        self.sp += 1;
+        self.sp = self.sp.wrapping_add(1);
         pending!();
         pending!();
         let val = memory.fetch8(0x0100 | self.sp as u32).await;
@@ -262,7 +262,13 @@ impl Cpu {
                     self.flags.set_carry(val & 0x1 != 0);
                     self.store8(1, &memory, inst.addressing(), val >> 1).await;
                 },
-                //Opcode::Rol => ,
+                Opcode::Rol => {
+                    let mut val = self.load8(1, &memory, inst.addressing()).await;
+                    let new_carry = val & 0x80 != 0;
+                    val = (val << 1) | self.flags.carry() as u8;
+                    self.store8(1, &memory, inst.addressing(), val).await;
+                    self.flags.set_carry(new_carry);
+                },
                 //Opcode::Ror => ,
 
                 // Flag instructions
@@ -328,7 +334,11 @@ impl Cpu {
                 }
 
                 // Interrupts
-                Opcode::Brk => { println!("hit brk!"); return; },
+                Opcode::Brk => {
+                    println!("hit brk!");
+                    //println!("cpu state: {:#x?}", self);
+                    return;
+                },
                 //Opcode::Rti => ,
 
                 // Other
@@ -344,6 +354,9 @@ impl Cpu {
                 other => todo!("{:?}", other),
             }
 
+            if let Some(v) = jumpto {
+                //println!("off we go to {:x}\r", v);
+            }
             self.pc = jumpto.unwrap_or(self.pc + inst.len());
         }
     }

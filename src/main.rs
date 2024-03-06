@@ -1,15 +1,19 @@
+// i gotta clean those up later
 use core::pin::pin;
 use futures::{pending, poll};
-use std::io::{Write, self};
+use std::io::Write;
 use std::sync::mpsc;
 use std::path::PathBuf;
 use clap::Parser;
-use std::fs;
+use std::{io, thread, fs};
 use std::sync::Arc;
+use std::sync::atomic::{Ordering, AtomicBool};
 use parking_lot::Mutex;
 use fdt_rs::prelude::*;
 use fdt_rs::base::DevTree;
 use std::collections::HashMap;
+use crossterm::event::{self, Event};
+use std::time::Duration;
 
 mod devices;
 mod mos6502;
@@ -22,6 +26,7 @@ pub struct MemoryWrapper {
     ptr: Arc<Mutex<MemoryMap>>,
 }
 
+// FIXME: 6502 timings
 impl MemoryWrapper {
     fn new(ptr: Arc<Mutex<MemoryMap>>) -> Self {
         Self { ptr }
@@ -63,16 +68,19 @@ impl MemoryMap {
     fn read8(&mut self, addr: u32) -> u8 {
         let mut data = None;
         for seg in self.segments.iter_mut() {
-            if addr > seg.start && addr <= seg.start + seg.size {
+            if addr >= seg.start && addr < seg.start + seg.size {
                 data = Some(seg.device.read8(addr - seg.start));
             }
+        
         }
-        data.expect(&format!("Invalid memory read at {:x}", addr))
+        data.unwrap_or(0)
+        //data.expect(&format!("Invalid memory read at {:x}", addr))
     }
-    fn write8(&mut self, addr: u32, val: u8) {
+    fn write8(&mut self, mut addr: u32, val: u8) {
         let mut written = false;
+        if addr == 0xd0f2 { addr = 0xd012; };
         for seg in self.segments.iter_mut() {
-            if addr > seg.start && addr <= seg.start + seg.size {
+            if addr >= seg.start && addr < seg.start + seg.size {
                 seg.device.write8(addr - seg.start, val);
                 written = true;
             }
@@ -94,7 +102,9 @@ struct Segment {
 struct Machine {
     mem: Arc<Mutex<MemoryMap>>,
     cpu: Cpu,
-    console_in: mpsc::Receiver<char>,
+    console_in: Option<mpsc::Receiver<char>>,
+    console_out: Option<mpsc::Sender<Event>>,
+    console_size: (u8, u8),
 }
 
 impl Machine {
@@ -114,32 +124,96 @@ struct Args {
 #[repr(align(4))]
 struct Align4<T>(T);
 
-async fn run(mut mach: Machine) -> u64 {
-    let mut cycles = 0;
-
-    {
-        let mut cpu_future = pin!(mach.cpu.run(mach.new_mem_wrapper()));
-        let mut stdout = io::stdout().lock();
-
-        loop {
-            if poll!(&mut cpu_future).is_ready() {
-                break;
-            }
-            if let Ok(data) = mach.console_in.try_recv() {
-                let _ = write!(stdout, "{}", data);
-                let _ = stdout.flush();
-            }
-            cycles += 1;
-        }
-        cycles -= 1;
-    }
-
-    println!("");
-    println!("CPU state on exit: {:#x?}", mach.cpu);
-    println!("{} cycles done", cycles - 2);
-    cycles
+struct EmuTui<'a> {
+    //mem: MemoryWrapper,
+    console_recv: mpsc::Receiver<char>,
+    console_send: mpsc::Sender<Event>,
+    console_size: (u8, u8),
+    run: &'a AtomicBool,
 }
 
+impl EmuTui<'_> {
+    fn run<'a> (&'a mut self) {
+        use crossterm::{execute, terminal};
+
+        let original_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            execute!(io::stderr(), terminal::LeaveAlternateScreen).unwrap();
+            //execute!(io::stderr(), event::DisableMouseCapture).unwrap();
+            terminal::disable_raw_mode().unwrap();
+            original_hook(panic_info);
+        }));
+
+        let mut stdout = io::stdout();
+        terminal::enable_raw_mode()
+            .expect("failed to enable raw mode");
+        //execute!(stdout, EnableMouseCapture)
+        //    .expect("unable to enable mouse capture");
+        //execute!(stdout, terminal::EnterAlternateScreen)
+        //    .expect("unable to enter alternate screen");
+
+        while self.run.load(Ordering::SeqCst) {
+            if let Ok(true) = event::poll(Duration::from_millis(50)) {
+                let ev = event::read().unwrap();
+                match ev {
+                    Event::Key(kev) => {
+                        if kev.code == event::KeyCode::Esc {
+                            self.run.store(false, Ordering::SeqCst);
+                        } else {
+                            if self.console_send.send(ev).is_err() {
+                                self.run.store(false, Ordering::SeqCst);
+                            }
+                        }
+                    },
+                    _ => (),
+                }
+            }
+
+            if let Ok(ch) = self.console_recv.try_recv() {
+                write!(stdout, "{}", ch);
+                while let Ok(ch2) = self.console_recv.try_recv() {
+                    write!(stdout, "{}", ch2);
+                }
+                stdout.flush();
+            }
+        }
+
+        terminal::disable_raw_mode()
+            .expect("failed to disable raw mode");
+        //execute!(stdout, terminal::LeaveAlternateScreen)
+        //    .expect("unable to switch to main screen");
+        //execute!(terminal.backend_mut(), event::DisableMouseCapture)
+        //    .expect("unable to disable mouse capture");
+    }
+}
+
+fn run(mut mach: Machine) {
+    let mut cycles = 0;
+    let run = AtomicBool::new(true);
+    let mut tui = EmuTui {
+        //mem: mach.new_mem_wrapper(),
+        console_recv: mach.console_in.take().unwrap(),
+        console_send: mach.console_out.take().unwrap(),
+        console_size: mach.console_size,
+        run: &run,
+    };
+
+    thread::scope(|s| {
+        s.spawn(|| tui.run());
+
+        futures::executor::block_on( async {
+            let mut cpu_future = pin!(mach.cpu.run(mach.new_mem_wrapper()));
+
+            while run.load(Ordering::SeqCst)  {
+                if poll!(&mut cpu_future).is_ready() {
+                    run.store(false, Ordering::SeqCst);
+                }
+                cycles += 1;
+            }
+            cycles -= 1;
+        } );
+    });
+}
 
 fn main() {
     let args = Args::parse();
@@ -205,8 +279,10 @@ fn main() {
     // TODO: look up the cpu
     let cpu = Cpu::new();
 
-    // wire up the console
-    let (mut sender, receiver) = Some(mpsc::channel()).unzip();
+    // wire up some devices
+    let (mut device_sender, emu_receiver) = Some(mpsc::channel()).unzip();
+    let (emu_sender, mut device_receiver) = Some(mpsc::channel()).unzip();
+    let mut size = (0, 0);
     for device in mem.segments.iter_mut().map(|s| &mut s.device) {
         if let Some(name) = device.firmware_name() {
             if let Some(data) = firmwares.get(name) {
@@ -217,10 +293,19 @@ fn main() {
         }
 
         if let Some(condev) = device.as_console_output() {
-            if let Some(out) = sender.take() {
+            if let Some(out) = device_sender.take() {
                 condev.attach_outchan(out);
+                size = condev.terminal_size();
             } else {
-                eprintln!("Only one console device may be active at any given moment");
+                eprintln!("Only one console output device may be active at any given moment");
+            }
+        }
+
+        if let Some(condev) = device.as_console_input() {
+            if let Some(inp) = device_receiver.take() {
+                condev.attach_inchan(inp);
+            } else {
+                eprintln!("Only one console input device may be active at any given moment");
             }
         }
     }
@@ -228,8 +313,10 @@ fn main() {
     let mach = Machine {
         cpu,
         mem: Arc::new(Mutex::new(mem)),
-        console_in: receiver.unwrap(),
+        console_in: emu_receiver,
+        console_out: emu_sender,
+        console_size: size,
     };
 
-    futures::executor::block_on(run(mach));
+    run(mach);
 }

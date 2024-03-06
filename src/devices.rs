@@ -15,6 +15,11 @@ pub mod prelude {
     pub use fdt_rs::base::DevTreeNode;
 }
 
+pub mod console_prelude {
+    pub use super::prelude::*;
+    pub use crossterm::event::Event;
+}
+
 pub trait Device: core::fmt::Debug {
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { None }
     fn as_console_output(&mut self) -> Option<&mut dyn ConsoleOutput> { None }
@@ -36,10 +41,11 @@ pub trait Console: ConsoleInput + ConsoleOutput {}
 
 pub trait ConsoleOutput: Device {
     fn attach_outchan(&mut self, channel: mpsc::Sender<char>);
+    fn terminal_size(&self) -> (u8, u8);
 }
 
 pub trait ConsoleInput: Device {
-    fn attach_inchan(&mut self, channel: mpsc::Receiver<char>);
+    fn attach_inchan(&mut self, channel: mpsc::Receiver<crossterm::event::Event>);
 }
 
 pub fn probe(compats: Vec<&str>, node: DevTreeNode) -> Option<Box<dyn Mmio>> {

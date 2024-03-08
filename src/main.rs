@@ -1,5 +1,4 @@
 // i gotta clean those up later
-use core::pin::pin;
 use futures::{pending, poll};
 use std::io::Write;
 use std::sync::mpsc;
@@ -17,8 +16,11 @@ use std::time::Duration;
 
 mod devices;
 mod mos6502;
+mod cpu;
 
-use mos6502::Cpu;
+use cpu::Cpu;
+
+use mos6502::Mos6502;
 
 use devices::{Mmio};
 
@@ -101,7 +103,6 @@ struct Segment {
 #[derive(Debug)]
 struct Machine {
     mem: Arc<Mutex<MemoryMap>>,
-    cpu: Cpu,
     console_in: Option<mpsc::Receiver<char>>,
     console_out: Option<mpsc::Sender<Event>>,
     console_size: (u8, u8),
@@ -128,7 +129,7 @@ struct EmuTui<'a> {
     //mem: MemoryWrapper,
     console_recv: mpsc::Receiver<char>,
     console_send: mpsc::Sender<Event>,
-    console_size: (u8, u8),
+    _console_size: (u8, u8),
     run: &'a AtomicBool,
 }
 
@@ -170,11 +171,11 @@ impl EmuTui<'_> {
             }
 
             if let Ok(ch) = self.console_recv.try_recv() {
-                write!(stdout, "{}", ch);
+                write!(stdout, "{}", ch).unwrap();
                 while let Ok(ch2) = self.console_recv.try_recv() {
-                    write!(stdout, "{}", ch2);
+                    write!(stdout, "{}", ch2).unwrap();
                 }
-                stdout.flush();
+                stdout.flush().unwrap();
             }
         }
 
@@ -194,16 +195,17 @@ fn run(mut mach: Machine) {
         //mem: mach.new_mem_wrapper(),
         console_recv: mach.console_in.take().unwrap(),
         console_send: mach.console_out.take().unwrap(),
-        console_size: mach.console_size,
+        _console_size: mach.console_size,
         run: &run,
     };
+
+    let mut cpu = Mos6502::new();
+    let mut cpu_future = cpu.tick_future(mach.new_mem_wrapper());
 
     thread::scope(|s| {
         s.spawn(|| tui.run());
 
         futures::executor::block_on( async {
-            let mut cpu_future = pin!(mach.cpu.run(mach.new_mem_wrapper()));
-
             while run.load(Ordering::SeqCst)  {
                 if poll!(&mut cpu_future).is_ready() {
                     run.store(false, Ordering::SeqCst);
@@ -253,8 +255,6 @@ fn main() {
         let mut dev = None;
         let mut reg = None;
         while let Some(prop) = prop_iter.next().unwrap() {
-            //println!("{:?}", prop.name());
-
             match prop.name().unwrap() {
                 "compatible" => {
                     let compat_strings: Vec<&str> = prop.iter_str().collect().unwrap();
@@ -275,9 +275,6 @@ fn main() {
             }
         }
     }
-
-    // TODO: look up the cpu
-    let cpu = Cpu::new();
 
     // wire up some devices
     let (mut device_sender, emu_receiver) = Some(mpsc::channel()).unzip();
@@ -311,7 +308,6 @@ fn main() {
     }
 
     let mach = Machine {
-        cpu,
         mem: Arc::new(Mutex::new(mem)),
         console_in: emu_receiver,
         console_out: emu_sender,

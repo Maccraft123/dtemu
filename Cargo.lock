@@ -161,7 +161,6 @@ name = "dtemu"
 version = "0.1.0"
 dependencies = [
  "bitfield-struct",
- "bitflags 2.4.2",
  "clap",
  "crossterm",
  "fdt-rs",

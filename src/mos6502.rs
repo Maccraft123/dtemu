@@ -1,8 +1,12 @@
 use bitfield_struct::bitfield;
 use futures::pending;
 use crate::{MemoryWrapper};
+//use async_trait::async_trait;
+use futures::Future;
+use std::pin::Pin;
 
 mod un6502;
+use crate::cpu::Cpu;
 
 #[bitfield(u8, order = Msb)]
 struct ProcFlags {
@@ -19,7 +23,6 @@ struct ProcFlags {
 impl ProcFlags {
     fn into_stack(mut self) -> u8 {
         self.set_break_(true);
-        self.set_unused(true);
         self.into()
     }
     fn from_stack(val: u8) -> ProcFlags {
@@ -47,7 +50,7 @@ enum Addressing {
 }
 
 #[derive(Debug)]
-pub struct Cpu {
+pub struct Mos6502State {
     pc: u16,
     sp: u8,
     a: u8,
@@ -56,132 +59,40 @@ pub struct Cpu {
     flags: ProcFlags,
 }
 
-impl Cpu {
-    pub fn new() -> Self {
+pub struct Mos6502 {
+    state: Mos6502State,
+}
+
+//#[async_trait]
+impl Cpu for Mos6502 {
+    type State = Mos6502State;
+
+    fn new() -> Self {
+        Self { state: Mos6502State::new() }
+    }
+    fn tick_future(&mut self, mem: MemoryWrapper) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+        Box::pin(self.state.run(mem))
+    }
+    fn disasm_instruction(&self, _: &[u8]) -> String {
+        todo!();
+    }
+    fn cur_instruction(&self) -> u32 { self.state.pc as u32 }
+    fn state(&self) -> &Self::State { &self.state }
+}
+
+impl Mos6502State {
+    fn new() -> Self {
         Self {
             pc: 0xfffc,
-            sp: 0xfd,
+            sp: 0xf0,
             a: 0xaa,
             x: 0,
             y: 0,
-            flags: ProcFlags::new().with_zero(true).with_irq_disable(true),
-        }
-    }
-    
-    fn update_zn(&mut self, val: u8) -> u8 {
-        if val == 0 {
-            self.flags.set_zero(true);
-        } else {
-            self.flags.set_zero(false);
-            self.flags.set_negative(val & 0x80 != 0);
-        }
-        val
-    }
-
-    async fn calc_addr(&self, offset: u32, memory: &MemoryWrapper, a: Addressing) -> u16 {
-        match a {
-            Addressing::Immediate   => self.pc + offset as u16,
-            Addressing::Absolute    => memory.fetch16(self.pc as u32 + offset).await,
-            Addressing::AbsoluteX   => memory.fetch16(self.pc as u32 + offset).await + self.x as u16,
-            Addressing::AbsoluteY   => memory.fetch16(self.pc as u32 + offset).await + self.y as u16,
-            Addressing::ZeroPage    => memory.fetch8(self.pc as u32 + offset).await as u16,
-            Addressing::ZeroPageX   => {
-                pending!(); 
-                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u16
-            },
-            Addressing::ZeroPageY   => {
-                pending!();
-                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.y) as u16
-            },
-            Addressing::Indirect    => memory.fetch16(memory.fetch16(self.pc as u32 + offset).await as u32).await,
-            Addressing::IndirectX   => {
-                let addr = memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u32;
-                memory.fetch16(addr as u32).await
-            },
-            Addressing::IndirectY   => {
-                let addr = memory.fetch8(self.pc as u32 + offset).await;
-                memory.fetch16(addr as u32).await + self.y as u16
-            },
-            Addressing::Accumulator => unreachable!("this is not how it works"),
-            Addressing::Implied     => unreachable!("no"),
-            Addressing::Relative    => unreachable!("how"),
+            flags: ProcFlags::new().with_unused(true).with_zero(true).with_irq_disable(true),
         }
     }
 
-    async fn load8(&self, offset: u32, memory: &MemoryWrapper, s: Addressing) -> u8 {
-        if s == Addressing::Accumulator {
-            self.a
-        } else {
-            memory.fetch8(self.calc_addr(offset, memory, s).await as u32).await
-        }
-    }
-
-    async fn store8(&mut self, offset: u32, memory: &MemoryWrapper, s: Addressing, val: u8) {
-        if s == Addressing::Accumulator {
-            self.a = val
-        } else {
-            memory.set8(self.calc_addr(offset, memory, s).await as u32, val).await
-        }
-    }
-
-    async fn push8(&mut self, memory: &MemoryWrapper, val: u8) {
-        memory.set8(0x0100 | self.sp as u32, val).await;
-        self.sp = self.sp.wrapping_sub(1);
-        pending!();
-    }
-
-    async fn pull8(&mut self, memory: &MemoryWrapper) -> u8 {
-        self.sp = self.sp.wrapping_add(1);
-        pending!();
-        pending!();
-        let val = memory.fetch8(0x0100 | self.sp as u32).await;
-        val
-    }
-
-    async fn branch_on(&mut self, memory: &MemoryWrapper, condition: bool) -> Option<u16> {
-        if condition {
-            let target = (self.pc as i32 + 2 + ((memory.fetch8(self.pc as u32 + 1).await as i8) as i32)) as u16;
-            //println!("taking a branch to {:x}", target);
-            pending!();
-            if target & 0xff00 != (self.pc + 2) & 0xff00 {
-                pending!();
-            }
-            Some(target)
-        } else {
-            None
-        }
-    }
-
-    fn cmp_helper(&mut self, reg: u8, val: u8) {
-        if reg == val {
-            self.flags.set_negative(false);
-            self.flags.set_zero(true);
-            self.flags.set_carry(true);
-        } else if reg > val {
-            self.flags.set_negative(reg - val & 0x80 != 0);
-            self.flags.set_zero(false);
-            self.flags.set_carry(true);
-        } else if reg < val {
-            self.flags.set_negative(reg.wrapping_sub(val) & 0x80 != 0);
-            self.flags.set_zero(false);
-            self.flags.set_carry(false);
-        } else {
-            unreachable!();
-        }
-    }
-
-    fn arith_helper(&mut self, val: u8) {
-        let (tmp, overflow1) = self.a.overflowing_add(val);
-        let (result, overflow2) = tmp.overflowing_add(self.flags.carry() as u8);
-        self.flags.set_carry(overflow1 || overflow2); // it came to me in a dream
-        if self.a & 0x80 == val & 0x80 {
-            self.flags.set_overflow(val & 0x80 != result & 0x80);
-        }
-
-        self.a = self.update_zn(result);
-    }
-
-    pub async fn run(&mut self, memory: MemoryWrapper) {
+    async fn run(&mut self, memory: MemoryWrapper) {
         // pretend to do the init stuff
         pending!(); pending!();
         pending!(); pending!();
@@ -269,7 +180,13 @@ impl Cpu {
                     self.store8(1, &memory, inst.addressing(), val).await;
                     self.flags.set_carry(new_carry);
                 },
-                //Opcode::Ror => ,
+                Opcode::Ror => {
+                    let mut val = self.load8(1, &memory, inst.addressing()).await;
+                    let new_carry = val & 0x1 != 0;
+                    val = (val >> 1) | (self.flags.carry() as u8 * 0x80);
+                    self.store8(1, &memory, inst.addressing(), val).await;
+                    self.flags.set_carry(new_carry);
+                },
 
                 // Flag instructions
                 Opcode::Clc => { pending!(); self.flags.set_carry(false); }
@@ -335,9 +252,9 @@ impl Cpu {
 
                 // Interrupts
                 Opcode::Brk => {
-                    println!("hit brk!");
-                    //println!("cpu state: {:#x?}", self);
-                    return;
+                    let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
+                    jumpto = Some(u16::from_le_bytes([lo, hi]));
+                    //return;
                 },
                 //Opcode::Rti => ,
 
@@ -354,10 +271,119 @@ impl Cpu {
                 other => todo!("{:?}", other),
             }
 
-            if let Some(v) = jumpto {
-                //println!("off we go to {:x}\r", v);
-            }
             self.pc = jumpto.unwrap_or(self.pc + inst.len());
         }
+    }
+    
+    fn update_zn(&mut self, val: u8) -> u8 {
+        if val == 0 {
+            self.flags.set_zero(true);
+        } else {
+            self.flags.set_zero(false);
+            self.flags.set_negative(val & 0x80 != 0);
+        }
+        val
+    }
+
+    async fn calc_addr(&self, offset: u32, memory: &MemoryWrapper, a: Addressing) -> u16 {
+        match a {
+            Addressing::Immediate   => self.pc + offset as u16,
+            Addressing::Absolute    => memory.fetch16(self.pc as u32 + offset).await,
+            Addressing::AbsoluteX   => memory.fetch16(self.pc as u32 + offset).await + self.x as u16,
+            Addressing::AbsoluteY   => memory.fetch16(self.pc as u32 + offset).await + self.y as u16,
+            Addressing::ZeroPage    => memory.fetch8(self.pc as u32 + offset).await as u16,
+            Addressing::ZeroPageX   => {
+                pending!(); 
+                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u16
+            },
+            Addressing::ZeroPageY   => {
+                pending!();
+                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.y) as u16
+            },
+            Addressing::Indirect    => memory.fetch16(memory.fetch16(self.pc as u32 + offset).await as u32).await,
+            Addressing::IndirectX   => {
+                let addr = memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u32;
+                memory.fetch16(addr as u32).await
+            },
+            Addressing::IndirectY   => {
+                let addr = memory.fetch8(self.pc as u32 + offset).await;
+                memory.fetch16(addr as u32).await + self.y as u16
+            },
+            Addressing::Accumulator => unreachable!("this is not how it works"),
+            Addressing::Implied     => unreachable!("no"),
+            Addressing::Relative    => unreachable!("how"),
+        }
+    }
+
+    async fn load8(&self, offset: u32, memory: &MemoryWrapper, s: Addressing) -> u8 {
+        if s == Addressing::Accumulator {
+            self.a
+        } else {
+            memory.fetch8(self.calc_addr(offset, memory, s).await as u32).await
+        }
+    }
+
+    async fn store8(&mut self, offset: u32, memory: &MemoryWrapper, s: Addressing, val: u8) {
+        if s == Addressing::Accumulator {
+            self.a = val
+        } else {
+            memory.set8(self.calc_addr(offset, memory, s).await as u32, val).await
+        }
+    }
+
+    async fn push8(&mut self, memory: &MemoryWrapper, val: u8) {
+        memory.set8(0x0100 | self.sp as u32, val).await;
+        self.sp = self.sp.wrapping_sub(1);
+        pending!();
+    }
+
+    async fn pull8(&mut self, memory: &MemoryWrapper) -> u8 {
+        self.sp = self.sp.wrapping_add(1);
+        pending!();
+        pending!();
+        let val = memory.fetch8(0x0100 | self.sp as u32).await;
+        val
+    }
+
+    async fn branch_on(&mut self, memory: &MemoryWrapper, condition: bool) -> Option<u16> {
+        if condition {
+            let target = (self.pc as i32 + 2 + ((memory.fetch8(self.pc as u32 + 1).await as i8) as i32)) as u16;
+            pending!();
+            if target & 0xff00 != (self.pc + 2) & 0xff00 {
+                pending!();
+            }
+            Some(target)
+        } else {
+            None
+        }
+    }
+
+    fn cmp_helper(&mut self, reg: u8, val: u8) {
+        if reg == val {
+            self.flags.set_negative(false);
+            self.flags.set_zero(true);
+            self.flags.set_carry(true);
+        } else if reg > val {
+            self.flags.set_negative(reg - val & 0x80 != 0);
+            self.flags.set_zero(false);
+            self.flags.set_carry(true);
+        } else if reg < val {
+            self.flags.set_negative(reg.wrapping_sub(val) & 0x80 != 0);
+            self.flags.set_zero(false);
+            self.flags.set_carry(false);
+        } else {
+            unreachable!();
+        }
+    }
+
+    fn arith_helper(&mut self, val: u8) {
+        let (tmp, overflow1) = self.a.overflowing_add(val);
+        let (result, overflow2) = tmp.overflowing_add(self.flags.carry() as u8);
+        self.flags.set_carry(overflow1 || overflow2); // it came to me in a dream
+        if self.a & 0x80 == val & 0x80 {
+            self.flags.set_overflow(val & 0x80 != result & 0x80);
+        }
+
+        self.a = self.update_zn(result);
     }
 }

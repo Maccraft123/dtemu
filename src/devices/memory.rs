@@ -32,7 +32,9 @@ impl Mmio for Rom {
         Some(&self.name)
     }
     fn load_firmware(&mut self, fw: &[u8]) {
-        self.data = fw.to_vec();
+        for (i, x) in fw.iter().enumerate() {
+             self.data[i] = *x;
+        }
     }
 }
 

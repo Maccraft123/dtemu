@@ -1,6 +1,5 @@
 use bitfield_struct::bitfield;
 use std::fmt;
-use std::io::Write;
 
 #[bitfield(u8)]
 pub struct RawOpcode {

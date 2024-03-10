@@ -1,16 +1,10 @@
 use bitfield_struct::bitfield;
 use futures::pending;
-use crate::{MemoryWrapper};
-//use async_trait::async_trait;
-use futures::Future;
-use std::pin::Pin;
-use std::ptr::NonNull;
-use std::marker::PhantomPinned;
-use std::mem::MaybeUninit;
+use crate::MemoryWrapper;
 use parking_lot::Mutex;
 
 use un6502::Addressing;
-use crate::cpu::Cpu;
+use crate::cpu::{Cpu, DisasmFn};
 
 #[bitfield(u8, order = Msb)]
 struct ProcFlags {
@@ -54,6 +48,7 @@ pub struct Mos6502 {
 
 impl Cpu for Mos6502 {
     type Instruction = un6502::Instruction;
+    type Registers = Mos6502State;
 
     fn new(mem: MemoryWrapper) -> Self {
         Self {
@@ -65,11 +60,14 @@ impl Cpu for Mos6502 {
     async fn tick(&self) {
         self.state.lock().run(self.mem.clone(), &self.cached_state).await
     }
-    fn disasm_instruction(&self, bytes: &[u8]) -> Self::Instruction {
-        un6502::disasm(bytes)
+    fn disasm_fn(&self) -> &'static DisasmFn {
+        &{|b| un6502::disasm(b).to_string()}
     }
-    fn cur_instruction(&self) -> u32 {
+    fn next_instruction(&self) -> u32 {
         self.cached_state.lock().pc as u32
+    }
+    fn regs(&self) -> &Mutex<Mos6502State> {
+        &self.cached_state
     }
 }
 
@@ -244,8 +242,8 @@ impl Mos6502State {
 
                 // Interrupts
                 Opcode::Brk => {
-                    let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
-                    jumpto = Some(u16::from_le_bytes([lo, hi]));
+                    //let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
+                    //jumpto = Some(u16::from_le_bytes([lo, hi]));
                     return;
                 },
                 //Opcode::Rti => ,
@@ -353,21 +351,8 @@ impl Mos6502State {
     }
 
     fn cmp_helper(&mut self, reg: u8, val: u8) {
-        if reg == val {
-            self.flags.set_negative(false);
-            self.flags.set_zero(true);
-            self.flags.set_carry(true);
-        } else if reg > val {
-            self.flags.set_negative(reg - val & 0x80 != 0);
-            self.flags.set_zero(false);
-            self.flags.set_carry(true);
-        } else if reg < val {
-            self.flags.set_negative(reg.wrapping_sub(val) & 0x80 != 0);
-            self.flags.set_zero(false);
-            self.flags.set_carry(false);
-        } else {
-            unreachable!();
-        }
+        self.update_zn(reg.wrapping_sub(val));
+        self.flags.set_carry(val <= reg);
     }
 
     fn arith_helper(&mut self, val: u8) {
@@ -375,7 +360,9 @@ impl Mos6502State {
         let (result, overflow2) = tmp.overflowing_add(self.flags.carry() as u8);
         self.flags.set_carry(overflow1 || overflow2); // it came to me in a dream
         if self.a & 0x80 == val & 0x80 {
-            self.flags.set_overflow(val & 0x80 != result & 0x80);
+            self.flags.set_overflow((val & 0x80) != (result & 0x80));
+        } else {
+            self.flags.set_overflow(false);
         }
 
         self.a = self.update_zn(result);

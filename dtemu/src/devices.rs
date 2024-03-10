@@ -20,7 +20,7 @@ pub mod console_prelude {
     pub use crossterm::event::Event;
 }
 
-pub trait Device: core::fmt::Debug {
+pub trait Device: core::fmt::Debug + Send {
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { None }
     fn as_console_output(&mut self) -> Option<&mut dyn ConsoleOutput> { None }
     fn as_console_input(&mut self) -> Option<&mut dyn ConsoleInput> { None }

@@ -4,10 +4,10 @@ use std::io::Write;
 use std::sync::mpsc;
 use std::path::PathBuf;
 use clap::Parser;
-use std::{io, thread, fs};
+use std::{io, thread, fs, fmt};
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, AtomicBool};
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use fdt_rs::prelude::*;
 use fdt_rs::base::DevTree;
 use std::collections::HashMap;
@@ -129,100 +129,206 @@ struct Args {
 #[repr(align(4))]
 struct Align4<T>(T);
 
-struct EmuTui<'a> {
+struct EmuTui {
     //mem: MemoryWrapper,
     console_recv: mpsc::Receiver<char>,
     console_send: mpsc::Sender<Event>,
     _console_size: (u8, u8),
-    run: &'a AtomicBool,
 }
 
-impl EmuTui<'_> {
-    fn run<'a> (&'a mut self) {
+impl EmuTui {
+    fn run(&mut self, info: DebuggerInfo) {
         use crossterm::{execute, terminal};
+        use crossterm::event::KeyCode;
+        use ratatui::prelude::*;
 
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
             execute!(io::stderr(), terminal::LeaveAlternateScreen).unwrap();
-            //execute!(io::stderr(), event::DisableMouseCapture).unwrap();
             terminal::disable_raw_mode().unwrap();
             original_hook(panic_info);
         }));
 
+        let mut debugger = false;
         let mut stdout = io::stdout();
+        let mut terminal = None;
         terminal::enable_raw_mode()
             .expect("failed to enable raw mode");
-        //execute!(stdout, EnableMouseCapture)
-        //    .expect("unable to enable mouse capture");
-        //execute!(stdout, terminal::EnterAlternateScreen)
-        //    .expect("unable to enter alternate screen");
 
-        while self.run.load(Ordering::SeqCst) {
+        while info.run.load(Ordering::SeqCst) {
             if let Ok(true) = event::poll(Duration::from_millis(50)) {
                 let ev = event::read().unwrap();
-                match ev {
-                    Event::Key(kev) => {
-                        if kev.code == event::KeyCode::Esc {
-                            self.run.store(false, Ordering::SeqCst);
-                        } else {
-                            if self.console_send.send(ev).is_err() {
-                                self.run.store(false, Ordering::SeqCst);
+                if debugger {
+                    match ev {
+                        Event::Key(kev) => {
+                            match kev.code {
+                                KeyCode::Esc => info.run.store(false, Ordering::SeqCst),
+                                KeyCode::Char(c) => match c {
+                                    // toggle debugger view
+                                    '`' => {
+                                        debugger = false;
+                                        execute!(stdout, terminal::LeaveAlternateScreen)
+                                            .expect("unable to leave alternate screen");
+                                    },
+                                    // do a step
+                                    ' ' => {
+                                        if info.singlestep.load(Ordering::SeqCst) {
+                                            let mut step = info.do_a_step.lock();
+                                            *step = true;
+                                            info.do_a_step_condvar.notify_all();
+                                        }
+                                    },
+                                    // toggle singlestep mode
+                                    's' => {
+                                        if info.singlestep.load(Ordering::SeqCst) {
+                                            info.singlestep.store(false, Ordering::SeqCst);
+                                            let mut step = info.do_a_step.lock();
+                                            *step = true;
+                                            info.do_a_step_condvar.notify_all();
+                                        } else {
+                                            info.singlestep.store(true, Ordering::SeqCst);
+                                        }
+                                    },
+                                    _ => (),
+                                },
+                                _ => (),
                             }
-                        }
-                    },
-                    _ => (),
+                        },
+                        _ => (),
+                    }
+                } else {
+                    match ev {
+                        Event::Key(kev) => {
+                            match kev.code {
+                                KeyCode::Esc => info.run.store(false, Ordering::SeqCst),
+                                KeyCode::Char(c) => match c {
+                                    // toggle debugger view
+                                    '`' => {
+                                        debugger = true;
+                                        execute!(stdout, terminal::EnterAlternateScreen)
+                                            .expect("unable to enter alternate screen");
+                                    },
+                                    // do a step
+                                    ' ' => if info.singlestep.load(Ordering::SeqCst) {
+                                        let mut step = info.do_a_step.lock();
+                                        *step = true;
+                                        info.do_a_step_condvar.notify_all();
+                                    },
+                                    _ => self.console_send.send(ev).unwrap(),
+                                },
+                                _ => self.console_send.send(ev).unwrap(),
+                            }
+                        },
+                        _ => (),
+                    }
                 }
             }
 
             if let Ok(ch) = self.console_recv.try_recv() {
-                write!(stdout, "{}", ch).unwrap();
-                while let Ok(ch2) = self.console_recv.try_recv() {
-                    write!(stdout, "{}", ch2).unwrap();
+                if !debugger {
+                    write!(stdout, "{}", ch).unwrap();
+                    while let Ok(ch2) = self.console_recv.try_recv() {
+                        write!(stdout, "{}", ch2).unwrap();
+                    }
+                    stdout.flush().unwrap();
                 }
-                stdout.flush().unwrap();
+            }
+
+            if debugger {
+                if terminal.is_none() {
+                    terminal = Some(Terminal::new(CrosstermBackend::new(io::stdout())).unwrap());
+                }
+                terminal.as_mut().unwrap().draw(|frame| {
+                    use ratatui::widgets::Paragraph;
+
+                    let layout = Layout::vertical([
+                        Constraint::Length(1),
+                        Constraint::Min(1),
+                    ]);
+                    let [instruction, regs] = layout.areas(frame.size());
+
+                    frame.render_widget(Paragraph::new(format!("{:#x?}", info.cpu_regs.lock())), regs);
+                    //frame.render_widget(Paragraph::new(self.instruction.lock().to_string()), instruction);
+                }).unwrap();
+            }
+
+            if !debugger && terminal.is_some() {
+                terminal = None;
             }
         }
 
         terminal::disable_raw_mode()
             .expect("failed to disable raw mode");
-        //execute!(stdout, terminal::LeaveAlternateScreen)
-        //    .expect("unable to switch to main screen");
-        //execute!(terminal.backend_mut(), event::DisableMouseCapture)
-        //    .expect("unable to disable mouse capture");
+        if debugger {
+            execute!(stdout, terminal::LeaveAlternateScreen)
+                .expect("unable to switch to main screen");
+        }
     }
+}
+
+struct DebuggerInfo<'mach, 'cpu> {
+    singlestep: &'mach AtomicBool,
+    do_a_step: &'mach Mutex<bool>,
+    do_a_step_condvar: &'mach Condvar,
+    cpu_regs: &'cpu Mutex<(dyn fmt::Debug + Send + Sync)>,
+    mem: MemoryWrapper,
+    disasm_fn: &'static cpu::DisasmFn,
+    run: &'mach AtomicBool,
 }
 
 fn run(mut mach: Machine) {
     let mut cycles = 0;
     let run = AtomicBool::new(true);
+    let singlestep = AtomicBool::new(false);
+    let do_a_step = Mutex::new(false);
+    let do_a_step_condvar = Condvar::new();
+    let instruction = Mutex::new(String::new());
+
+    let mem = mach.new_mem_wrapper();
+    let cpu = Mos6502::new(mach.new_mem_wrapper());
+    let mut cpu_fut = std::pin::pin!(cpu.tick());
+
     let mut tui = EmuTui {
         //mem: mach.new_mem_wrapper(),
         console_recv: mach.console_in.take().unwrap(),
         console_send: mach.console_out.take().unwrap(),
         _console_size: mach.console_size,
+    };
+
+    let debugger_info = DebuggerInfo {
         run: &run,
+        singlestep: &singlestep,
+        do_a_step: &do_a_step,
+        do_a_step_condvar: &do_a_step_condvar,
+        cpu_regs: cpu.regs(),
+        mem: mach.new_mem_wrapper(),
+        disasm_fn: cpu.disasm_fn(),
     };
 
     thread::scope(|s| {
-        s.spawn(|| tui.run());
-
         futures::executor::block_on( async {
-            let mem = mach.new_mem_wrapper();
-            let mut cpu = Mos6502::new(mach.new_mem_wrapper());
-            let mut cpu_fut = std::pin::pin!(cpu.tick());
+            s.spawn(|| tui.run(debugger_info));
 
             while run.load(Ordering::SeqCst)  {
                 if poll!(&mut cpu_fut).is_ready() {
                     run.store(false, Ordering::SeqCst);
                 }
-                let cur = cpu.cur_instruction();
+                let cur = cpu.next_instruction();
                 let bytes = [
                     mem.fetch8_fast(cur),
                     mem.fetch8_fast(cur+1),
                     mem.fetch8_fast(cur+2),
                 ];
-                println!("{}", cpu.disasm_instruction(&bytes));
+                //instruction.lock().clone_from(&format!("{}", cpu.disasm_instruction(&bytes)));
+
                 cycles += 1;
+                if singlestep.load(Ordering::SeqCst) {
+                    let mut step = do_a_step.lock();
+                    if !*step {
+                        do_a_step_condvar.wait(&mut step);
+                    }
+                    *step = false;
+                }
             }
             cycles -= 1;
         } );

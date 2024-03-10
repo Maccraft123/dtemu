@@ -28,6 +28,10 @@ pub struct MemoryWrapper {
     ptr: Arc<Mutex<MemoryMap>>,
 }
 
+impl Clone for MemoryWrapper {
+    fn clone(&self) -> Self { MemoryWrapper { ptr: Arc::clone(&self.ptr) } }
+}
+
 // FIXME: 6502 timings
 impl MemoryWrapper {
     fn new(ptr: Arc<Mutex<MemoryMap>>) -> Self {
@@ -36,9 +40,9 @@ impl MemoryWrapper {
     //fn set8_fast(&self, addr: u32, val: u8) {
     //    self.ptr.lock().write8(addr, val)
     //}
-    //fn fetch8_fast(&self, addr: u32) -> u8 {
-    //    self.ptr.lock().read8(addr)
-    //}
+    fn fetch8_fast(&self, addr: u32) -> u8 {
+        self.ptr.lock().read8(addr)
+    }
     async fn fetch8(&self, addr: u32) -> u8 {
         pending!();
         self.ptr.lock().read8(addr)
@@ -199,17 +203,25 @@ fn run(mut mach: Machine) {
         run: &run,
     };
 
-    let mut cpu = Mos6502::new();
-    let mut cpu_future = cpu.tick_future(mach.new_mem_wrapper());
-
     thread::scope(|s| {
         s.spawn(|| tui.run());
 
         futures::executor::block_on( async {
+            let mem = mach.new_mem_wrapper();
+            let mut cpu = Mos6502::new(mach.new_mem_wrapper());
+            let mut cpu_fut = std::pin::pin!(cpu.tick());
+
             while run.load(Ordering::SeqCst)  {
-                if poll!(&mut cpu_future).is_ready() {
+                if poll!(&mut cpu_fut).is_ready() {
                     run.store(false, Ordering::SeqCst);
                 }
+                let cur = cpu.cur_instruction();
+                let bytes = [
+                    mem.fetch8_fast(cur),
+                    mem.fetch8_fast(cur+1),
+                    mem.fetch8_fast(cur+2),
+                ];
+                println!("{}", cpu.disasm_instruction(&bytes));
                 cycles += 1;
             }
             cycles -= 1;

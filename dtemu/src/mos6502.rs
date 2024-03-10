@@ -4,8 +4,12 @@ use crate::{MemoryWrapper};
 //use async_trait::async_trait;
 use futures::Future;
 use std::pin::Pin;
+use std::ptr::NonNull;
+use std::marker::PhantomPinned;
+use std::mem::MaybeUninit;
+use parking_lot::Mutex;
 
-mod un6502;
+use un6502::Addressing;
 use crate::cpu::Cpu;
 
 #[bitfield(u8, order = Msb)]
@@ -32,24 +36,7 @@ impl ProcFlags {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Addressing {
-    Accumulator,
-    Absolute,
-    AbsoluteX,
-    AbsoluteY,
-    Immediate,
-    Implied,
-    Indirect,
-    IndirectX,
-    IndirectY,
-    Relative,
-    ZeroPage,
-    ZeroPageX,
-    ZeroPageY,
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Mos6502State {
     pc: u16,
     sp: u8,
@@ -60,24 +47,30 @@ pub struct Mos6502State {
 }
 
 pub struct Mos6502 {
-    state: Mos6502State,
+    state: Mutex<Mos6502State>,
+    cached_state: Mutex<Mos6502State>,
+    mem: MemoryWrapper,
 }
 
-//#[async_trait]
 impl Cpu for Mos6502 {
-    type State = Mos6502State;
+    type Instruction = un6502::Instruction;
 
-    fn new() -> Self {
-        Self { state: Mos6502State::new() }
+    fn new(mem: MemoryWrapper) -> Self {
+        Self {
+            state: Mutex::new(Mos6502State::new()),
+            cached_state: Mutex::new(Mos6502State::new()),
+            mem,
+        }
     }
-    fn tick_future(&mut self, mem: MemoryWrapper) -> Pin<Box<dyn Future<Output = ()> + '_>> {
-        Box::pin(self.state.run(mem))
+    async fn tick(&self) {
+        self.state.lock().run(self.mem.clone(), &self.cached_state).await
     }
-    fn disasm_instruction(&self, _: &[u8]) -> String {
-        todo!();
+    fn disasm_instruction(&self, bytes: &[u8]) -> Self::Instruction {
+        un6502::disasm(bytes)
     }
-    fn cur_instruction(&self) -> u32 { self.state.pc as u32 }
-    fn state(&self) -> &Self::State { &self.state }
+    fn cur_instruction(&self) -> u32 {
+        self.cached_state.lock().pc as u32
+    }
 }
 
 impl Mos6502State {
@@ -91,8 +84,7 @@ impl Mos6502State {
             flags: ProcFlags::new().with_unused(true).with_zero(true).with_irq_disable(true),
         }
     }
-
-    async fn run(&mut self, memory: MemoryWrapper) {
+    async fn run(&mut self, memory: MemoryWrapper, other_state: &Mutex<Mos6502State>) {
         // pretend to do the init stuff
         pending!(); pending!();
         pending!(); pending!();
@@ -254,7 +246,7 @@ impl Mos6502State {
                 Opcode::Brk => {
                     let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
                     jumpto = Some(u16::from_le_bytes([lo, hi]));
-                    //return;
+                    return;
                 },
                 //Opcode::Rti => ,
 
@@ -272,6 +264,8 @@ impl Mos6502State {
             }
 
             self.pc = jumpto.unwrap_or(self.pc + inst.len());
+
+            other_state.lock().clone_from(self);
         }
     }
     

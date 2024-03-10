@@ -37,6 +37,12 @@
 	rom@e000 {
 		compatible = "generic-rom";
 		rom,name = "rc6502_8k";
-		reg = <0xe000 0x1fff>;
+		reg = <0xe000 0x2000>;
+	};
+
+	rom@1000 {
+		compatible = "generic-rom";
+		rom,name = "oneshot";
+		reg = <0x1000 0xbfff>;
 	};
 };

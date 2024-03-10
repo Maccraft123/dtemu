@@ -1,14 +1,32 @@
 use bitfield_struct::bitfield;
-use super::Addressing;
+use std::fmt;
+use std::io::Write;
 
 #[bitfield(u8)]
-struct RawOpcode {
+pub struct RawOpcode {
     #[bits(2)]
     c: u8,
     #[bits(3)]
     b: u8,
     #[bits(3)]
     a: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Addressing {
+    Accumulator,
+    Absolute,
+    AbsoluteX,
+    AbsoluteY,
+    Immediate,
+    Implied,
+    Indirect,
+    IndirectX,
+    IndirectY,
+    Relative,
+    ZeroPage,
+    ZeroPageX,
+    ZeroPageY,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,6 +89,86 @@ pub enum Opcode {
     Inc,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum Operand {
+    U8(u8),
+    U16(u16),
+}
+
+impl Operand {
+    fn u8(self) -> Option<u8> {
+        match self {
+            Operand::U8(v) => Some(v),
+            _ => None,
+        }
+    }
+    fn u16(self) -> Option<u16> {
+        match self {
+            Operand::U16(v) => Some(v),
+            _ => None,
+        }
+    }
+}
+
+pub struct Instruction {
+    opcode: Opcode,
+    addressing: Addressing,
+    operand: Option<Operand>,
+}
+
+pub fn disasm(bytes: &[u8]) -> Instruction {
+    let dataless = decode_u8(bytes[0]);
+    match dataless.len() {
+        1 => Instruction {
+            opcode: dataless.opcode(),
+            addressing: dataless.addressing(),
+            operand: None,
+        },
+        2 => Instruction {
+            opcode: dataless.opcode(),
+            addressing: dataless.addressing(),
+            operand: Some(Operand::U8(bytes[1])),
+        },
+        3 => Instruction {
+            opcode: dataless.opcode(),
+            addressing: dataless.addressing(),
+            operand: Some(Operand::U16(bytes[1] as u16 | (bytes[2] as u16) << 8)),
+        },
+        _ => unreachable!(),
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use Addressing::*;
+        let opcode = format!("{:?}", self.opcode).to_uppercase();
+        let op8 = self.operand.map(|v| v.u8().unwrap_or(0)).unwrap_or(0);
+        let op16 = self.operand.map(|v| v.u16().unwrap_or(0)).unwrap_or(0);
+
+        let operand = match self.addressing {
+            Immediate => format!("#${:02x?}", op8),
+            Absolute => format!("${:04x?}", op16),
+            ZeroPage => format!("${:02x?}", op8),
+            AbsoluteX => format!("${:04x?},X", op16),
+            AbsoluteY => format!("${:04x?},Y", op16),
+            ZeroPageX => format!("${:02x?},X", op8),
+            ZeroPageY => format!("${:02x?},Y", op8),
+            Indirect => format!("(${:04x?})", op16),
+            IndirectX => format!("(${:02x?},X)", op8),
+            IndirectY => format!("(${:02x?}),Y", op8),
+            Relative => format!("{}", op8 as i8),
+            Accumulator => "A".into(),
+            Implied => "".into(),
+        };
+
+
+        f.write_str(&opcode)?;
+        f.write_str(" ")?;
+        f.write_str(&operand)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct DatalessInstruction(Opcode, Addressing);
 
@@ -78,7 +176,7 @@ impl DatalessInstruction {
     pub fn opcode(&self) -> Opcode { self.0 }
     pub fn addressing(&self) -> Addressing { self.1 }
     pub fn len(&self) -> u16 {
-        use super::Addressing::*;
+        use Addressing::*;
         match self.1 {
             Absolute | AbsoluteX | AbsoluteY => 3,
             Relative | Immediate | ZeroPage | ZeroPageX | ZeroPageY => 2,
@@ -94,7 +192,7 @@ fn di(opcode: Opcode, addressing: Addressing) -> DatalessInstruction {
 
 pub fn decode_u8(val: u8) -> DatalessInstruction {
     use Opcode::*;
-    use super::Addressing::*;
+    use Addressing::*;
     let raw = RawOpcode::from(val);
     match (raw.a(), raw.b(), raw.c()) {
         (a, b, 0) => {

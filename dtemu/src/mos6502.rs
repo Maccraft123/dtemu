@@ -2,6 +2,7 @@ use bitfield_struct::bitfield;
 use futures::pending;
 use crate::MemoryWrapper;
 use parking_lot::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use un6502::Addressing;
 use crate::cpu::{Cpu, DisasmFn};
@@ -43,6 +44,7 @@ pub struct Mos6502State {
 pub struct Mos6502 {
     state: Mutex<Mos6502State>,
     cached_state: Mutex<Mos6502State>,
+    instruction_done: AtomicBool,
     mem: MemoryWrapper,
 }
 
@@ -54,17 +56,21 @@ impl Cpu for Mos6502 {
         Self {
             state: Mutex::new(Mos6502State::new()),
             cached_state: Mutex::new(Mos6502State::new()),
+            instruction_done: AtomicBool::new(false),
             mem,
         }
     }
     async fn tick(&self) {
-        self.state.lock().run(self.mem.clone(), &self.cached_state).await
+        self.state.lock().run(self.mem.clone(), &self.cached_state, &self.instruction_done).await
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
         &{|b| un6502::disasm(b).to_string()}
     }
     fn next_instruction(&self) -> u32 {
         self.cached_state.lock().pc as u32
+    }
+    fn instruction_done(&self) -> bool {
+        self.instruction_done.load(Ordering::SeqCst)
     }
     fn regs(&self) -> &Mutex<Mos6502State> {
         &self.cached_state
@@ -82,7 +88,7 @@ impl Mos6502State {
             flags: ProcFlags::new().with_unused(true).with_zero(true).with_irq_disable(true),
         }
     }
-    async fn run(&mut self, memory: MemoryWrapper, other_state: &Mutex<Mos6502State>) {
+    async fn run(&mut self, memory: MemoryWrapper, other_state: &Mutex<Mos6502State>, inst_done: &AtomicBool) {
         // pretend to do the init stuff
         pending!(); pending!();
         pending!(); pending!();
@@ -94,19 +100,19 @@ impl Mos6502State {
             let mut jumpto = None;
             use un6502::Opcode;
             
-            let inst = un6502::decode_u8(memory.fetch8(self.pc as u32).await);
 
-            //println!("{:02x} {:04x} {:?} A:{:02x} X:{:02x} Y:{:02x} P:{:02x} SP:{:02x}", memory.fetch8_fast(self.pc as u32), self.pc, inst.opcode(), self.a, self.x, self.y, asdf, self.sp);
-            //println!("Running {:?}", inst);
+            let inst = un6502::decode_u8(memory.fetch8(self.pc as u32).await);
+            inst_done.store(false, Ordering::SeqCst);
+
             match inst.opcode() {
                 // Transfer instructions
-                Opcode::Lda => self.a = self.update_zn(self.load8(1, &memory, inst.addressing()).await),
-                Opcode::Ldx => self.x = self.update_zn(self.load8(1, &memory, inst.addressing()).await),
-                Opcode::Ldy => self.y = self.update_zn(self.load8(1, &memory, inst.addressing()).await),
+                Opcode::Lda => self.a = self.update_zn(self.load8(&memory, inst.addressing()).await),
+                Opcode::Ldx => self.x = self.update_zn(self.load8(&memory, inst.addressing()).await),
+                Opcode::Ldy => self.y = self.update_zn(self.load8(&memory, inst.addressing()).await),
 
-                Opcode::Sta => { self.store8(1, &memory, inst.addressing(), self.a).await; },
-                Opcode::Stx => { self.store8(1, &memory, inst.addressing(), self.x).await; },
-                Opcode::Sty => { self.store8(1, &memory, inst.addressing(), self.y).await; },
+                Opcode::Sta => { self.store8(&memory, inst.addressing(), self.a).await; },
+                Opcode::Stx => { self.store8(&memory, inst.addressing(), self.x).await; },
+                Opcode::Sty => { self.store8(&memory, inst.addressing(), self.y).await; },
 
                 Opcode::Tax => { pending!(); self.x = self.update_zn(self.a); },
                 Opcode::Tay => { pending!(); self.y = self.update_zn(self.a); },
@@ -123,15 +129,15 @@ impl Mos6502State {
 
                 // Decrements and increments
                 Opcode::Dec => {
-                    let val = self.update_zn(self.load8(1, &memory, inst.addressing()).await.wrapping_sub(1));
-                    self.store8(1, &memory, inst.addressing(), val).await;
+                    let val = self.update_zn(self.load8(&memory, inst.addressing()).await.wrapping_sub(1));
+                    self.store8(&memory, inst.addressing(), val).await;
                     pending!();
                 },
                 Opcode::Dex => { pending!(); self.x = self.x.wrapping_sub(1); self.update_zn(self.x); },
                 Opcode::Dey => { pending!(); self.y = self.y.wrapping_sub(1); self.update_zn(self.y); },
                 Opcode::Inc => {
-                    let val = self.update_zn(self.load8(1, &memory, inst.addressing()).await.wrapping_add(1));
-                    self.store8(1, &memory, inst.addressing(), val).await;
+                    let val = self.update_zn(self.load8(&memory, inst.addressing()).await.wrapping_add(1));
+                    self.store8(&memory, inst.addressing(), val).await;
                     pending!();
                 },
                 Opcode::Inx => { pending!(); self.x = self.x.wrapping_add(1); self.update_zn(self.x); }
@@ -139,42 +145,42 @@ impl Mos6502State {
 
                 // Arithmetic operations
                 Opcode::Adc => {
-                    let val = self.load8(1, &memory, inst.addressing()).await;
+                    let val = self.load8(&memory, inst.addressing()).await;
                     self.arith_helper(val);
                 },
                 Opcode::Sbc => {
-                    let val = self.load8(1, &memory, inst.addressing()).await ^ 0xff;
+                    let val = self.load8(&memory, inst.addressing()).await ^ 0xff;
                     self.arith_helper(val);
                 },
 
                 // Logical operations
-                Opcode::And => { pending!(); self.a = self.update_zn(self.a & self.load8(1, &memory, inst.addressing()).await)},
-                Opcode::Eor => { pending!(); self.a = self.update_zn(self.a ^ self.load8(1, &memory, inst.addressing()).await)},
-                Opcode::Ora => { pending!(); self.a = self.update_zn(self.a | self.load8(1, &memory, inst.addressing()).await)},
+                Opcode::And => { pending!(); self.a = self.update_zn(self.a & self.load8(&memory, inst.addressing()).await)},
+                Opcode::Eor => { pending!(); self.a = self.update_zn(self.a ^ self.load8(&memory, inst.addressing()).await)},
+                Opcode::Ora => { pending!(); self.a = self.update_zn(self.a | self.load8(&memory, inst.addressing()).await)},
 
                 // Shift and rotate instructions
                 Opcode::Asl => {
-                    let val = self.load8(1, &memory, inst.addressing()).await;
+                    let val = self.load8(&memory, inst.addressing()).await;
                     self.flags.set_carry(val & 0x80 != 0);
-                    self.store8(1, &memory, inst.addressing(), val << 1).await;
+                    self.store8(&memory, inst.addressing(), val << 1).await;
                 },
                 Opcode::Lsr => {
-                    let val = self.load8(1, &memory, inst.addressing()).await;
+                    let val = self.load8(&memory, inst.addressing()).await;
                     self.flags.set_carry(val & 0x1 != 0);
-                    self.store8(1, &memory, inst.addressing(), val >> 1).await;
+                    self.store8(&memory, inst.addressing(), val >> 1).await;
                 },
                 Opcode::Rol => {
-                    let mut val = self.load8(1, &memory, inst.addressing()).await;
+                    let mut val = self.load8(&memory, inst.addressing()).await;
                     let new_carry = val & 0x80 != 0;
                     val = (val << 1) | self.flags.carry() as u8;
-                    self.store8(1, &memory, inst.addressing(), val).await;
+                    self.store8(&memory, inst.addressing(), val).await;
                     self.flags.set_carry(new_carry);
                 },
                 Opcode::Ror => {
-                    let mut val = self.load8(1, &memory, inst.addressing()).await;
+                    let mut val = self.load8(&memory, inst.addressing()).await;
                     let new_carry = val & 0x1 != 0;
                     val = (val >> 1) | (self.flags.carry() as u8 * 0x80);
-                    self.store8(1, &memory, inst.addressing(), val).await;
+                    self.store8(&memory, inst.addressing(), val).await;
                     self.flags.set_carry(new_carry);
                 },
 
@@ -188,9 +194,9 @@ impl Mos6502State {
                 Opcode::Sei => { pending!(); self.flags.set_irq_disable(true); }
 
                 // Comparisons
-                Opcode::Cmp => self.cmp_helper(self.a, self.load8(1, &memory, inst.addressing()).await),
-                Opcode::Cpx => self.cmp_helper(self.x, self.load8(1, &memory, inst.addressing()).await),
-                Opcode::Cpy => self.cmp_helper(self.y, self.load8(1, &memory, inst.addressing()).await),
+                Opcode::Cmp => self.cmp_helper(self.a, self.load8(&memory, inst.addressing()).await),
+                Opcode::Cpx => self.cmp_helper(self.x, self.load8(&memory, inst.addressing()).await),
+                Opcode::Cpy => self.cmp_helper(self.y, self.load8(&memory, inst.addressing()).await),
 
                 // Conditional branch instructions
                 Opcode::Bcc => jumpto = self.branch_on(&memory, !self.flags.carry()).await,
@@ -223,27 +229,26 @@ impl Mos6502State {
                         pending!();
                     }
                     if new_pc == self.pc {
-                        println!("refusing to do an infinite loop");
-                        return;
+                        panic!("refusing to do an infinite loop");
                     }
                     jumpto = Some(new_pc);
                 },
                 Opcode::Jsr => {
-                    //println!("return location: {:x}", self.pc + 3);
-                    self.push8(&memory, ((self.pc + 3) & 0x00ff) as u8).await;
-                    self.push8(&memory, (((self.pc + 3) & 0xff00) >> 8) as u8).await;
+                    self.push8(&memory, ((self.pc + 2) & 0x00ff) as u8).await;
+                    self.push8(&memory, (((self.pc + 2) & 0xff00) >> 8) as u8).await;
                     jumpto = Some(u16::from_le_bytes([memory.fetch8(self.pc as u32 + 1).await, memory.fetch8(self.pc as u32 + 2).await]));
                 },
                 Opcode::Rts => {
                     let hi = self.pull8(&memory).await;
                     let lo = self.pull8(&memory).await;
-                    jumpto = Some(((hi as u16) << 8) | lo as u16);
+                    jumpto = Some(((hi as u16) << 8) | lo as u16 + 1);
                 }
 
                 // Interrupts
                 Opcode::Brk => {
                     //let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
                     //jumpto = Some(u16::from_le_bytes([lo, hi]));
+                    eprintln!("BRK encountered!");
                     return;
                 },
                 //Opcode::Rti => ,
@@ -251,7 +256,7 @@ impl Mos6502State {
                 // Other
                 Opcode::Bit => {
                     pending!();
-                    let val = self.load8(1, &memory, inst.addressing()).await;
+                    let val = self.load8(&memory, inst.addressing()).await;
                     self.flags.set_negative(val & 0x80 != 0);
                     self.flags.set_overflow(val & 0x40 != 0);
                     self.flags.set_zero(val & self.a == 0);
@@ -261,8 +266,13 @@ impl Mos6502State {
                 other => todo!("{:?}", other),
             }
 
-            self.pc = jumpto.unwrap_or(self.pc + inst.len());
+            if jumpto == Some(0x00) || jumpto == Some(0x01) {
+                panic!("\r\nno i won't do a jump to 0x0 or 0x1 are you stupid\r
+State on exit just before it: {:#x?}\r", other_state.lock());
+            }
+            self.pc = jumpto.unwrap_or(self.pc.wrapping_add(inst.len()));
 
+            inst_done.store(true, Ordering::SeqCst);
             other_state.lock().clone_from(self);
         }
     }
@@ -277,28 +287,28 @@ impl Mos6502State {
         val
     }
 
-    async fn calc_addr(&self, offset: u32, memory: &MemoryWrapper, a: Addressing) -> u16 {
+    async fn calc_addr(&self, memory: &MemoryWrapper, a: Addressing) -> u16 {
         match a {
-            Addressing::Immediate   => self.pc + offset as u16,
-            Addressing::Absolute    => memory.fetch16(self.pc as u32 + offset).await,
-            Addressing::AbsoluteX   => memory.fetch16(self.pc as u32 + offset).await + self.x as u16,
-            Addressing::AbsoluteY   => memory.fetch16(self.pc as u32 + offset).await + self.y as u16,
-            Addressing::ZeroPage    => memory.fetch8(self.pc as u32 + offset).await as u16,
+            Addressing::Immediate   => self.pc + 1,
+            Addressing::Absolute    => memory.fetch16(self.pc as u32 + 1).await,
+            Addressing::AbsoluteX   => memory.fetch16(self.pc as u32 + 1).await + self.x as u16,
+            Addressing::AbsoluteY   => memory.fetch16(self.pc as u32 + 1).await + self.y as u16,
+            Addressing::ZeroPage    => memory.fetch8(self.pc as u32 + 1).await as u16,
             Addressing::ZeroPageX   => {
                 pending!(); 
-                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u16
+                memory.fetch8(self.pc as u32 + 1).await.wrapping_add(self.x) as u16
             },
             Addressing::ZeroPageY   => {
                 pending!();
-                memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.y) as u16
+                memory.fetch8(self.pc as u32 + 1).await.wrapping_add(self.y) as u16
             },
-            Addressing::Indirect    => memory.fetch16(memory.fetch16(self.pc as u32 + offset).await as u32).await,
+            Addressing::Indirect    => memory.fetch16(memory.fetch16(self.pc as u32 + 1).await as u32).await,
             Addressing::IndirectX   => {
-                let addr = memory.fetch8(self.pc as u32 + offset).await.wrapping_add(self.x) as u32;
+                let addr = memory.fetch8(self.pc as u32 + 1).await.wrapping_add(self.x) as u32;
                 memory.fetch16(addr as u32).await
             },
             Addressing::IndirectY   => {
-                let addr = memory.fetch8(self.pc as u32 + offset).await;
+                let addr = memory.fetch8(self.pc as u32 + 1).await;
                 memory.fetch16(addr as u32).await + self.y as u16
             },
             Addressing::Accumulator => unreachable!("this is not how it works"),
@@ -307,19 +317,19 @@ impl Mos6502State {
         }
     }
 
-    async fn load8(&self, offset: u32, memory: &MemoryWrapper, s: Addressing) -> u8 {
+    async fn load8(&self, memory: &MemoryWrapper, s: Addressing) -> u8 {
         if s == Addressing::Accumulator {
             self.a
         } else {
-            memory.fetch8(self.calc_addr(offset, memory, s).await as u32).await
+            memory.fetch8(self.calc_addr(memory, s).await as u32).await
         }
     }
 
-    async fn store8(&mut self, offset: u32, memory: &MemoryWrapper, s: Addressing, val: u8) {
+    async fn store8(&mut self, memory: &MemoryWrapper, s: Addressing, val: u8) {
         if s == Addressing::Accumulator {
             self.a = val
         } else {
-            memory.set8(self.calc_addr(offset, memory, s).await as u32, val).await
+            memory.set8(self.calc_addr(memory, s).await as u32, val).await
         }
     }
 

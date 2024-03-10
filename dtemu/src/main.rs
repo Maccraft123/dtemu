@@ -84,6 +84,7 @@ impl MemoryMap {
     }
     fn write8(&mut self, mut addr: u32, val: u8) {
         let mut written = false;
+        // FIXME
         if addr == 0xd0f2 { addr = 0xd012; };
         for seg in self.segments.iter_mut() {
             if addr >= seg.start && addr < seg.start + seg.size {
@@ -130,7 +131,6 @@ struct Args {
 struct Align4<T>(T);
 
 struct EmuTui {
-    //mem: MemoryWrapper,
     console_recv: mpsc::Receiver<char>,
     console_send: mpsc::Sender<Event>,
     _console_size: (u8, u8),
@@ -141,6 +141,7 @@ impl EmuTui {
         use crossterm::{execute, terminal};
         use crossterm::event::KeyCode;
         use ratatui::prelude::*;
+        use ratatui::widgets::{Block, Borders, Paragraph};
 
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -239,16 +240,32 @@ impl EmuTui {
                     terminal = Some(Terminal::new(CrosstermBackend::new(io::stdout())).unwrap());
                 }
                 terminal.as_mut().unwrap().draw(|frame| {
-                    use ratatui::widgets::Paragraph;
-
-                    let layout = Layout::vertical([
-                        Constraint::Length(1),
+                    let layout = Layout::horizontal([
                         Constraint::Min(1),
+                        Constraint::Length(60),
                     ]);
-                    let [instruction, regs] = layout.areas(frame.size());
+                    let [regs, memory] = layout.areas(frame.size());
 
-                    frame.render_widget(Paragraph::new(format!("{:#x?}", info.cpu_regs.lock())), regs);
-                    //frame.render_widget(Paragraph::new(self.instruction.lock().to_string()), instruction);
+                    let mut mem_hex = String::new();
+                    for x in 0x00..0x10 {
+                        mem_hex += &format!("{:x}0: ", x);
+                        for y in 0x0..0x10 {
+                            mem_hex += &format!("{:02x} ", info.mem.fetch8_fast(x << 4 | y));
+                        }
+                        mem_hex += "\n";
+                    }
+
+                    frame.render_widget(
+                        Paragraph::new(mem_hex)
+                            .block(Block::default().title("Memory").borders(Borders::ALL)),
+                        memory
+                    );
+
+                    frame.render_widget(
+                        Paragraph::new(format!("{:#x?}", info.cpu_regs.lock()))
+                            .block(Block::default().title("CPU Registers").borders(Borders::ALL)),
+                        regs
+                    );
                 }).unwrap();
             }
 
@@ -309,19 +326,25 @@ fn run(mut mach: Machine) {
         futures::executor::block_on( async {
             s.spawn(|| tui.run(debugger_info));
 
-            while run.load(Ordering::SeqCst)  {
-                if poll!(&mut cpu_fut).is_ready() {
-                    run.store(false, Ordering::SeqCst);
-                }
-                let cur = cpu.next_instruction();
-                let bytes = [
-                    mem.fetch8_fast(cur),
-                    mem.fetch8_fast(cur+1),
-                    mem.fetch8_fast(cur+2),
-                ];
-                //instruction.lock().clone_from(&format!("{}", cpu.disasm_instruction(&bytes)));
+            // Iterates once for every instruction
+            'outer: loop {
+                // Iterates once for every clock cycle
+                'cycles: loop {
+                    if poll!(&mut cpu_fut).is_ready() {
+                        run.store(false, Ordering::SeqCst);
+                    }
 
-                cycles += 1;
+                    cycles += 1;
+
+                    if !run.load(Ordering::SeqCst) {
+                        break 'outer;
+                    }
+
+                    if cpu.instruction_done() {
+                        break 'cycles;
+                    }
+                }
+
                 if singlestep.load(Ordering::SeqCst) {
                     let mut step = do_a_step.lock();
                     if !*step {

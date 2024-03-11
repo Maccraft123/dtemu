@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use un6502::Addressing;
-use crate::cpu::{Cpu, DisasmFn};
+use crate::cpu::{Cpu, CpuRegs, DisasmFn};
 
 #[bitfield(u8, order = Msb)]
 struct ProcFlags {
@@ -41,6 +41,10 @@ pub struct Mos6502State {
     flags: ProcFlags,
 }
 
+impl CpuRegs for Mos6502State {
+    fn next_instruction(&self) -> u32 { self.pc as u32 }
+}
+
 pub struct Mos6502 {
     state: Mutex<Mos6502State>,
     cached_state: Mutex<Mos6502State>,
@@ -65,9 +69,6 @@ impl Cpu for Mos6502 {
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
         &{|b| un6502::disasm(b).to_string()}
-    }
-    fn next_instruction(&self) -> u32 {
-        self.cached_state.lock().pc as u32
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
@@ -95,6 +96,7 @@ impl Mos6502State {
         // woo reset vector
         let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
         self.pc = u16::from_le_bytes([lo, hi]);
+        let mut adios = false;
 
         loop {
             let mut jumpto = None;
@@ -149,8 +151,8 @@ impl Mos6502State {
                     self.arith_helper(val);
                 },
                 Opcode::Sbc => {
-                    let val = self.load8(&memory, inst.addressing()).await ^ 0xff;
-                    self.arith_helper(val);
+                    let val = self.load8(&memory, inst.addressing()).await;
+                    self.arith_helper(!val);
                 },
 
                 // Logical operations
@@ -246,10 +248,10 @@ impl Mos6502State {
 
                 // Interrupts
                 Opcode::Brk => {
-                    //let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
-                    //jumpto = Some(u16::from_le_bytes([lo, hi]));
-                    eprintln!("BRK encountered!");
-                    return;
+                    let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
+                    jumpto = Some(u16::from_le_bytes([lo, hi]));
+                    //adios = true;
+                    //eprintln!("BRK encountered!");
                 },
                 //Opcode::Rti => ,
 
@@ -266,8 +268,8 @@ impl Mos6502State {
                 other => todo!("{:?}", other),
             }
 
-            if jumpto == Some(0x00) || jumpto == Some(0x01) {
-                panic!("\r\nno i won't do a jump to 0x0 or 0x1 are you stupid\r
+            if adios || jumpto == Some(0x00) || jumpto == Some(0x01) {
+                panic!("\r\nno i won't do it are you stupid\r
 State on exit just before it: {:#x?}\r", other_state.lock());
             }
             self.pc = jumpto.unwrap_or(self.pc.wrapping_add(inst.len()));
@@ -366,15 +368,16 @@ State on exit just before it: {:#x?}\r", other_state.lock());
     }
 
     fn arith_helper(&mut self, val: u8) {
-        let (tmp, overflow1) = self.a.overflowing_add(val);
-        let (result, overflow2) = tmp.overflowing_add(self.flags.carry() as u8);
-        self.flags.set_carry(overflow1 || overflow2); // it came to me in a dream
+        let result = self.a as u16 + self.flags.carry() as u16 + val as u16;
+        let result8 = self.a.wrapping_add(self.flags.carry() as u8).wrapping_add(val);
+        self.flags.set_carry(result > 0xff);
         if self.a & 0x80 == val & 0x80 {
-            self.flags.set_overflow((val & 0x80) != (result & 0x80));
+            self.flags.set_overflow((val & 0x80) != (result8 & 0x80));
         } else {
             self.flags.set_overflow(false);
         }
+        self.flags.set_overflow((!(self.a ^ val) & (self.a ^ result8) & 0x80) != 0);
 
-        self.a = self.update_zn(result);
+        self.a = self.update_zn(result8);
     }
 }

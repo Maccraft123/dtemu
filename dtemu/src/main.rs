@@ -4,7 +4,7 @@ use std::io::Write;
 use std::sync::mpsc;
 use std::path::PathBuf;
 use clap::Parser;
-use std::{io, thread, fs, fmt};
+use std::{io, thread, fs};
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, AtomicBool};
 use parking_lot::{Condvar, Mutex};
@@ -18,7 +18,7 @@ mod devices;
 mod mos6502;
 mod cpu;
 
-use cpu::Cpu;
+use cpu::{Cpu, CpuRegs};
 
 use mos6502::Mos6502;
 
@@ -255,6 +255,10 @@ impl EmuTui {
                         mem_hex += "\n";
                     }
 
+                    let pc = info.cpu_regs.lock().next_instruction();
+                    let bytes: Vec<u8> = (pc..pc+4).map(|v| info.mem.fetch8_fast(v)).collect();
+                    let instruction = (info.disasm_fn)(&bytes);
+
                     frame.render_widget(
                         Paragraph::new(mem_hex)
                             .block(Block::default().title("Memory").borders(Borders::ALL)),
@@ -262,7 +266,7 @@ impl EmuTui {
                     );
 
                     frame.render_widget(
-                        Paragraph::new(format!("{:#x?}", info.cpu_regs.lock()))
+                        Paragraph::new(format!("{:#x?}\n{}", info.cpu_regs.lock(), instruction))
                             .block(Block::default().title("CPU Registers").borders(Borders::ALL)),
                         regs
                     );
@@ -287,7 +291,7 @@ struct DebuggerInfo<'mach, 'cpu> {
     singlestep: &'mach AtomicBool,
     do_a_step: &'mach Mutex<bool>,
     do_a_step_condvar: &'mach Condvar,
-    cpu_regs: &'cpu Mutex<(dyn fmt::Debug + Send + Sync)>,
+    cpu_regs: &'cpu Mutex<(dyn CpuRegs + Send + Sync)>,
     mem: MemoryWrapper,
     disasm_fn: &'static cpu::DisasmFn,
     run: &'mach AtomicBool,
@@ -299,14 +303,11 @@ fn run(mut mach: Machine) {
     let singlestep = AtomicBool::new(false);
     let do_a_step = Mutex::new(false);
     let do_a_step_condvar = Condvar::new();
-    let instruction = Mutex::new(String::new());
 
-    let mem = mach.new_mem_wrapper();
     let cpu = Mos6502::new(mach.new_mem_wrapper());
     let mut cpu_fut = std::pin::pin!(cpu.tick());
 
     let mut tui = EmuTui {
-        //mem: mach.new_mem_wrapper(),
         console_recv: mach.console_in.take().unwrap(),
         console_send: mach.console_out.take().unwrap(),
         _console_size: mach.console_size,
@@ -343,6 +344,10 @@ fn run(mut mach: Machine) {
                     if cpu.instruction_done() {
                         break 'cycles;
                     }
+                }
+
+                if cpu.regs().lock().next_instruction() == 0x1000 {
+                    singlestep.store(true, Ordering::SeqCst);
                 }
 
                 if singlestep.load(Ordering::SeqCst) {

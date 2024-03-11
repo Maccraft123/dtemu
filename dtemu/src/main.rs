@@ -346,9 +346,10 @@ fn run(mut mach: Machine) {
                     }
                 }
 
-                if cpu.regs().lock().next_instruction() == 0x1000 {
-                    singlestep.store(true, Ordering::SeqCst);
-                }
+                // TODO: put into debugger 
+                //if cpu.regs().lock().next_instruction() == 0x1000 {
+                //    singlestep.store(true, Ordering::SeqCst);
+                //}
 
                 if singlestep.load(Ordering::SeqCst) {
                     let mut step = do_a_step.lock();

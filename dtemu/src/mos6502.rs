@@ -43,6 +43,8 @@ pub struct Mos6502State {
 
 impl CpuRegs for Mos6502State {
     fn next_instruction(&self) -> u32 { self.pc as u32 }
+    fn stack_bot(&self) -> u32 { 0x100 | 0xfd }
+    fn stack_top(&self) -> u32 { 0x100 | self.sp as u32 }
 }
 
 pub struct Mos6502 {
@@ -82,7 +84,7 @@ impl Mos6502State {
     fn new() -> Self {
         Self {
             pc: 0xfffc,
-            sp: 0xf0,
+            sp: 0xfd,
             a: 0xaa,
             x: 0,
             y: 0,
@@ -192,7 +194,7 @@ impl Mos6502State {
                 Opcode::Cli => { pending!(); self.flags.set_irq_disable(false); }
                 Opcode::Clv => { pending!(); self.flags.set_overflow(false); }
                 Opcode::Sec => { pending!(); self.flags.set_carry(true); }
-                Opcode::Sed => { pending!(); self.flags.set_decimal(true); /*unimplemented!("BCD arithmetics")*/ }
+                Opcode::Sed => { pending!(); self.flags.set_decimal(true); }
                 Opcode::Sei => { pending!(); self.flags.set_irq_disable(true); }
 
                 // Comparisons
@@ -236,8 +238,9 @@ impl Mos6502State {
                     jumpto = Some(new_pc);
                 },
                 Opcode::Jsr => {
-                    self.push8(&memory, ((self.pc + 2) & 0x00ff) as u8).await;
-                    self.push8(&memory, (((self.pc + 2) & 0xff00) >> 8) as u8).await;
+                    let bytes = (self.pc +  2).to_le_bytes();
+                    self.push8(&memory, bytes[0]).await;
+                    self.push8(&memory, bytes[1]).await;
                     jumpto = Some(u16::from_le_bytes([memory.fetch8(self.pc as u32 + 1).await, memory.fetch8(self.pc as u32 + 2).await]));
                 },
                 Opcode::Rts => {
@@ -248,8 +251,8 @@ impl Mos6502State {
 
                 // Interrupts
                 Opcode::Brk => {
-                    let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
-                    jumpto = Some(u16::from_le_bytes([lo, hi]));
+                    //let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
+                    //jumpto = Some(u16::from_le_bytes([lo, hi]));
                     //adios = true;
                     //eprintln!("BRK encountered!");
                 },
@@ -261,7 +264,7 @@ impl Mos6502State {
                     let val = self.load8(&memory, inst.addressing()).await;
                     self.flags.set_negative(val & 0x80 != 0);
                     self.flags.set_overflow(val & 0x40 != 0);
-                    self.flags.set_zero(val & self.a == 0);
+                    self.flags.set_zero((val & self.a) == 0);
                 },
                 Opcode::Nop => pending!(),
 
@@ -337,12 +340,12 @@ State on exit just before it: {:#x?}\r", other_state.lock());
 
     async fn push8(&mut self, memory: &MemoryWrapper, val: u8) {
         memory.set8(0x0100 | self.sp as u32, val).await;
-        self.sp = self.sp.wrapping_sub(1);
+        self.sp -= 1;
         pending!();
     }
 
     async fn pull8(&mut self, memory: &MemoryWrapper) -> u8 {
-        self.sp = self.sp.wrapping_add(1);
+        self.sp += 1;
         pending!();
         pending!();
         let val = memory.fetch8(0x0100 | self.sp as u32).await;
@@ -368,16 +371,29 @@ State on exit just before it: {:#x?}\r", other_state.lock());
     }
 
     fn arith_helper(&mut self, val: u8) {
-        let result = self.a as u16 + self.flags.carry() as u16 + val as u16;
-        let result8 = self.a.wrapping_add(self.flags.carry() as u8).wrapping_add(val);
-        self.flags.set_carry(result > 0xff);
-        if self.a & 0x80 == val & 0x80 {
-            self.flags.set_overflow((val & 0x80) != (result8 & 0x80));
-        } else {
-            self.flags.set_overflow(false);
-        }
-        self.flags.set_overflow((!(self.a ^ val) & (self.a ^ result8) & 0x80) != 0);
+        let result;
+        if self.flags.decimal() {
+            let result_lo = (val & 0x0f) + (self.a & 0x0f);
+            let carry_lo = (result_lo & 0xf0) != 0;
 
-        self.a = self.update_zn(result8);
+            let result_hi = (val as u16 & 0xf0) + (self.a as u16 & 0xf0) + ((carry_lo as u16) << 4);
+            let final_carry = (result_hi & 0xf00) != 0;
+
+            result = (result_lo & 0x0f) as u16 | (result_hi & 0xf0);
+            self.flags.set_carry(final_carry);
+        } else {
+            result = self.a as u16 + self.flags.carry() as u16 + val as u16;
+
+            self.flags.set_carry(result > 0xff);
+            self.flags.set_overflow((!(self.a ^ val) & (self.a ^ (result & 0xff) as u8) & 0x80) != 0);
+        }
+
+        //if self.a & 0x80 == val & 0x80 {
+        //    self.flags.set_overflow((val & 0x80) != (result & 0x80) as u8);
+        //} else {
+        //    self.flags.set_overflow(false);
+        //}
+
+        self.a = self.update_zn((result & 0xff) as u8);
     }
 }

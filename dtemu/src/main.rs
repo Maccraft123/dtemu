@@ -74,26 +74,26 @@ impl MemoryMap {
     fn read8(&mut self, addr: u32) -> u8 {
         let mut data = None;
         for seg in self.segments.iter_mut() {
-            if addr >= seg.start && addr < seg.start + seg.size {
+            if addr >= seg.start && addr < (seg.start + seg.size) {
                 data = Some(seg.device.read8(addr - seg.start));
             }
         
         }
-        data.unwrap_or(0)
-        //data.expect(&format!("Invalid memory read at {:x}", addr))
+        //data.unwrap_or(0)
+        data.expect(&format!("Invalid memory read at {:x}", addr))
     }
     fn write8(&mut self, mut addr: u32, val: u8) {
         let mut written = false;
         // FIXME
         if addr == 0xd0f2 { addr = 0xd012; };
         for seg in self.segments.iter_mut() {
-            if addr >= seg.start && addr < seg.start + seg.size {
+            if addr >= seg.start && addr < (seg.start + seg.size) {
                 seg.device.write8(addr - seg.start, val);
                 written = true;
             }
         }
         if !written {
-            panic!("Invalid memory write {:x} = {:x}", addr, val);
+            panic!("Invalid memory write: {:x} = {:x}", addr, val);
         }
     }
 }
@@ -141,7 +141,7 @@ impl EmuTui {
         use crossterm::{execute, terminal};
         use crossterm::event::KeyCode;
         use ratatui::prelude::*;
-        use ratatui::widgets::{Block, Borders, Paragraph};
+        use ratatui::widgets::{Block, Borders, Paragraph, List};
 
         let original_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic_info| {
@@ -210,7 +210,7 @@ impl EmuTui {
                                             .expect("unable to enter alternate screen");
                                     },
                                     // do a step
-                                    ' ' => if info.singlestep.load(Ordering::SeqCst) {
+                                    ' ' if info.singlestep.load(Ordering::SeqCst) => {
                                         let mut step = info.do_a_step.lock();
                                         *step = true;
                                         info.do_a_step_condvar.notify_all();
@@ -240,11 +240,13 @@ impl EmuTui {
                     terminal = Some(Terminal::new(CrosstermBackend::new(io::stdout())).unwrap());
                 }
                 terminal.as_mut().unwrap().draw(|frame| {
+                    let mut cpu_regs = info.cpu_regs.lock();
                     let layout = Layout::horizontal([
                         Constraint::Min(1),
+                        Constraint::Length(7),
                         Constraint::Length(60),
                     ]);
-                    let [regs, memory] = layout.areas(frame.size());
+                    let [regs, stack, memory] = layout.areas(frame.size());
 
                     let mut mem_hex = String::new();
                     for x in 0x00..0x10 {
@@ -255,18 +257,32 @@ impl EmuTui {
                         mem_hex += "\n";
                     }
 
-                    let pc = info.cpu_regs.lock().next_instruction();
-                    let bytes: Vec<u8> = (pc..pc+4).map(|v| info.mem.fetch8_fast(v)).collect();
-                    let instruction = (info.disasm_fn)(&bytes);
-
                     frame.render_widget(
                         Paragraph::new(mem_hex)
                             .block(Block::default().title("Memory").borders(Borders::ALL)),
                         memory
                     );
 
+                    let mut stack_contents = Vec::new();
+                    let bot = cpu_regs.stack_bot();
+                    let top = cpu_regs.stack_top();
+                    if bot > top {
+                        for addr in top..bot {
+                            stack_contents.push(format!("{:02x?}\n", info.mem.fetch8_fast(addr)));
+                        }
+                    }
                     frame.render_widget(
-                        Paragraph::new(format!("{:#x?}\n{}", info.cpu_regs.lock(), instruction))
+                        List::new(stack_contents)
+                            .block(Block::default().title("Stack").borders(Borders::ALL)),
+                        stack
+                    );
+
+                    let pc = cpu_regs.next_instruction();
+                    let bytes: Vec<u8> = (pc..pc+4).map(|v| info.mem.fetch8_fast(v)).collect();
+                    let instruction = (info.disasm_fn)(&bytes);
+
+                    frame.render_widget(
+                        Paragraph::new(format!("{:#x?}\n{}", cpu_regs, instruction))
                             .block(Block::default().title("CPU Registers").borders(Borders::ALL)),
                         regs
                     );

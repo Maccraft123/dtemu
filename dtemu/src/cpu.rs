@@ -23,4 +23,6 @@ pub trait Cpu {
 
 pub trait CpuRegs: fmt::Debug {
     fn next_instruction(&self) -> u32;
+    fn stack_bot(&self) -> u32;
+    fn stack_top(&self) -> u32;
 }

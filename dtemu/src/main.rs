@@ -79,8 +79,9 @@ impl MemoryMap {
             }
         
         }
-        //data.unwrap_or(0)
-        data.expect(&format!("Invalid memory read at {:x}", addr))
+        //eprintln!("Invalid memory read at {:x}\r", addr);
+        data.unwrap_or(0)
+        //data.expect(&format!("Invalid memory read at {:x}", addr))
     }
     fn write8(&mut self, mut addr: u32, val: u8) {
         let mut written = false;
@@ -93,7 +94,7 @@ impl MemoryMap {
             }
         }
         if !written {
-            panic!("Invalid memory write: {:x} = {:x}", addr, val);
+            eprintln!("Invalid memory write: {:x} = {:x}\r", addr, val);
         }
     }
 }
@@ -125,6 +126,10 @@ struct Args {
     machine: PathBuf,
     #[arg(long)]
     fw: Vec<String>,
+    #[arg(short, long)]
+    cycles: Option<u64>,
+    #[arg(long)]
+    dump_cpu_state: bool,
 }
 
 #[repr(align(4))]
@@ -137,7 +142,7 @@ struct EmuTui {
 }
 
 impl EmuTui {
-    fn run(&mut self, info: DebuggerInfo) {
+    fn run(&mut self, mut info: DebuggerInfo) {
         use crossterm::{execute, terminal};
         use crossterm::event::KeyCode;
         use ratatui::prelude::*;
@@ -225,13 +230,20 @@ impl EmuTui {
                 }
             }
 
-            if let Ok(ch) = self.console_recv.try_recv() {
-                if !debugger {
-                    write!(stdout, "{}", ch).unwrap();
-                    while let Ok(ch2) = self.console_recv.try_recv() {
-                        write!(stdout, "{}", ch2).unwrap();
+            if !debugger {
+                if let Some(ref mut ch) = info.cpu_dump {
+                    if let Ok(string) = ch.try_recv() {
+                        write!(stdout, "{}\r\n", string).unwrap();
+                        stdout.flush().unwrap();
                     }
-                    stdout.flush().unwrap();
+                } else {
+                    if let Ok(ch) = self.console_recv.try_recv() {
+                        write!(stdout, "{}", ch).unwrap();
+                        while let Ok(ch2) = self.console_recv.try_recv() {
+                            write!(stdout, "{}", ch2).unwrap();
+                        }
+                        stdout.flush().unwrap();
+                    }
                 }
             }
 
@@ -279,7 +291,7 @@ impl EmuTui {
 
                     let pc = cpu_regs.next_instruction();
                     let bytes: Vec<u8> = (pc..pc+4).map(|v| info.mem.fetch8_fast(v)).collect();
-                    let instruction = (info.disasm_fn)(&bytes);
+                    let instruction = (info.disasm_fn)(&bytes, Some(pc as u32));
 
                     frame.render_widget(
                         Paragraph::new(format!("{:#x?}\n{}", cpu_regs, instruction))
@@ -311,9 +323,10 @@ struct DebuggerInfo<'mach, 'cpu> {
     mem: MemoryWrapper,
     disasm_fn: &'static cpu::DisasmFn,
     run: &'mach AtomicBool,
+    cpu_dump: Option<mpsc::Receiver<String>>,
 }
 
-fn run(mut mach: Machine) {
+fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
     let mut cycles = 0;
     let run = AtomicBool::new(true);
     let singlestep = AtomicBool::new(false);
@@ -329,6 +342,15 @@ fn run(mut mach: Machine) {
         _console_size: mach.console_size,
     };
 
+    let cpu_dump;
+    if do_dump_cpu {
+        let (tx, rx) = mpsc::channel();
+        cpu.trace_start(tx);
+        cpu_dump = Some(rx);
+    } else {
+        cpu_dump = None;
+    }
+
     let debugger_info = DebuggerInfo {
         run: &run,
         singlestep: &singlestep,
@@ -337,6 +359,7 @@ fn run(mut mach: Machine) {
         cpu_regs: cpu.regs(),
         mem: mach.new_mem_wrapper(),
         disasm_fn: cpu.disasm_fn(),
+        cpu_dump,
     };
 
     thread::scope(|s| {
@@ -359,6 +382,13 @@ fn run(mut mach: Machine) {
 
                     if cpu.instruction_done() {
                         break 'cycles;
+                    }
+                    if let Some(ref mut c) = do_cycles {
+                        *c -= 1;
+                        if *c == 0 {
+                            run.store(false, Ordering::SeqCst);
+                            break 'outer;
+                        }
                     }
                 }
 
@@ -477,5 +507,5 @@ fn main() {
         console_size: size,
     };
 
-    run(mach);
+    run(mach, args.cycles, args.dump_cpu_state);
 }

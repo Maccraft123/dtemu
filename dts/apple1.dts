@@ -29,20 +29,21 @@
 		reg = <0x0 0x8000>;
 	};
 
-	pia@d010 {
-		compatible = "motorola,mc6821";
-		reg = <0xd010 0x4>;
-	};
+	//pia@d010 {
+	//	compatible = "motorola,mc6821";
+	//	reg = <0xd000 0x100>;
+	//};
 
-	rom@e000 {
-		compatible = "generic-rom";
-		rom,name = "rc6502_8k";
-		reg = <0xe000 0x2000>;
-	};
+	//rom@e000 {
+	//	compatible = "generic-rom";
+	//	rom,name = "rc6502_8k";
+	//	reg = <0xe000 0x2000>;
+	//};
 
-	rom@1000 {
+	rom@0 {
 		compatible = "generic-rom";
-		rom,name = "oneshot";
-		reg = <0x1000 0xbfff>;
+		rom,name = "test";
+		reg = <0x0000 0x10000>;
+		rom,allow-write;
 	};
 };

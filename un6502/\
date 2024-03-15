@@ -147,19 +147,20 @@ impl fmt::Display for Instruction {
         use Addressing::*;
         let opcode = format!("{:?}", self.opcode).to_uppercase();
         let op8 = self.operand.map(|v| v.u8().unwrap_or(0)).unwrap_or(0);
+        let opi8 = i8::from_ne_bytes([self.operand.map(|v| v.u8().unwrap_or(0)).unwrap_or(0)]);
         let op16 = self.operand.map(|v| v.u16().unwrap_or(0)).unwrap_or(0);
 
         let operand = match self.addressing {
             Immediate => format!("#${:02x?}", op8),
-            Absolute => format!("${:04x}", op16),
-            ZeroPage => format!("${:02x}", op8),
-            AbsoluteX => format!("${:04x},X", op16),
-            AbsoluteY => format!("${:04x},Y", op16),
-            ZeroPageX => format!("${:02x},X", op8),
-            ZeroPageY => format!("${:02x},Y", op8),
-            Indirect => format!("(${:04x})", op16),
-            IndirectX => format!("(${:02x},X)", op8),
-            IndirectY => format!("(${:02x}),Y", op8),
+            Absolute => format!("${:04x?}", op16),
+            ZeroPage => format!("${:02x?}", op8),
+            AbsoluteX => format!("${:04x?},X", op16),
+            AbsoluteY => format!("${:04x?},Y", op16),
+            ZeroPageX => format!("${:02x?},X", op8),
+            ZeroPageY => format!("${:02x?},Y", op8),
+            Indirect => format!("(${:04x?})", op16),
+            IndirectX => format!("(${:02x?},X)", op8),
+            IndirectY => format!("(${:02x?}),Y", op8),
             Relative => {
                 if let Some(addr) = self.addr {
                     // need to cast first to i8 then to i16 because otherwise it won't catch
@@ -202,9 +203,9 @@ impl DatalessInstruction {
     pub fn len(&self) -> u16 {
         use Addressing::*;
         match self.1 {
-            Indirect | Absolute | AbsoluteX | AbsoluteY => 3,
+            Absolute | AbsoluteX | AbsoluteY => 3,
             Relative | Immediate | ZeroPage | ZeroPageX | ZeroPageY => 2,
-            IndirectX | IndirectY => 2,
+            Indirect | IndirectX | IndirectY => 2,
             Accumulator | Implied => 1,
         }
     }
@@ -591,29 +592,21 @@ mod tests {
         assert_eq!("BVC $1010",     dis_addr(&[0x50, 0x10], 0x1000));
         assert_eq!("BVS $1010",     dis_addr(&[0x70, 0x10], 0x1000));
     }
-    #[test]
     fn jumps() {
         assert_eq!("JMP $aa55",     dis(&[0x4c, 0x55, 0xaa]));
         assert_eq!("JMP ($aa55)",   dis(&[0x6c, 0x55, 0xaa]));
         assert_eq!("JSR $aa55",     dis(&[0x20, 0x55, 0xaa]));
         assert_eq!("RTS",           dis(&[0x60]));
     }
-    #[test]
     fn interrupts() {
         assert_eq!("BRK",           dis(&[0x00]));
         assert_eq!("RTI",           dis(&[0x40]));
     }
-    #[test]
     fn others() {
-        assert_eq!("BIT $22",       dis(&[0x24, 0x22]));
-        assert_eq!("BIT $aa55",     dis(&[0x2c, 0x55, 0xaa]));
-        assert_eq!("NOP",           dis(&[0xea]));
+        assert_rq!("BIT $22",       dis(&[0x24, 0x22]));
+        assert_rq!("BIT $aa55",     dis(&[0x2c, 0x55, 0xaa]));
+        assert_rq!("NOP",           dis(&[0xea]));
     }
-    // one day...
-    //#[test]
-    //fn disasm_coverage() {
-    //    for x in 0x00..=0xff {
-    //        dis(&[x, 0, 0, 0, 0]);
-    //    }
-    //}
+    fn undocumented() {
+    }
 }

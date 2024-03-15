@@ -1,0 +1,66 @@
+/dts-v1/;
+
+/ {
+	compatible = "nintendo,nes", "mos,6502";
+	model = "nintendo,nes";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "ricoh,2a03", "mos,6502";
+			reg = <0 0>;
+			clocks = <&cpu_clk>;
+		};
+	};
+
+	main_clk: clock {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <21477272>;
+	};
+	
+	cpu_clk: clock-divider-cpu {
+		compatible = "fixed-factor-clock";
+		#clock-cells = <0>;
+		clocks = <&main_clk>;
+		clock-div = <12>;
+		clock-mult = <1>;
+	};
+
+	ppu_clk: clock-divider-ppu {
+		compatible = "fixed-factor-clock";
+		#clock-cells = <0>;
+		clocks = <&main_clk>;
+		clock-div = <4>;
+		clock-mult = <1>;
+	};
+
+	memory@0 {
+		compatible = "memory";
+		mirror-size = <0x800>;
+		reg = <0x0 0x2000>;
+	};
+
+	ppu@2000 {
+		compatible = "ricoh,2c02";
+		clocks = <&ppu_clk>;
+		reg = <0x2000 0x2000>;
+		mirror-size = <0x8>;
+	};
+
+	apu@4000 {
+		compatible = "ricoh,2a03-apu";
+		reg = <0x4000 0x20>;
+	};
+
+	// TODO: mappers
+	rom@4020 {
+		compatible = "generic-rom";
+		rom,name = "cartridge";
+		reg = <0x4020 0xbfe0>;
+	};
+};

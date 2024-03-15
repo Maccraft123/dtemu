@@ -2,6 +2,8 @@ use bitfield_struct::bitfield;
 use futures::pending;
 use crate::MemoryWrapper;
 use parking_lot::Mutex;
+use std::sync::mpsc;
+use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use un6502::Addressing;
@@ -31,6 +33,13 @@ impl ProcFlags {
     }
 }
 
+struct Mos6502Stuff<'a> {
+    mem: MemoryWrapper,
+    cached_state: &'a Mutex<Mos6502State>,
+    instruction_done: &'a AtomicBool,
+    trace_tx: &'a Mutex<Option<mpsc::Sender<String>>>
+}
+
 #[derive(Debug, Clone)]
 pub struct Mos6502State {
     pc: u16,
@@ -52,11 +61,13 @@ pub struct Mos6502 {
     cached_state: Mutex<Mos6502State>,
     instruction_done: AtomicBool,
     mem: MemoryWrapper,
+    tx: Mutex<Option<mpsc::Sender<String>>>,
 }
 
 impl Cpu for Mos6502 {
     type Instruction = un6502::Instruction;
     type Registers = Mos6502State;
+    type TraceFormat = String;
 
     fn new(mem: MemoryWrapper) -> Self {
         Self {
@@ -64,19 +75,32 @@ impl Cpu for Mos6502 {
             cached_state: Mutex::new(Mos6502State::new()),
             instruction_done: AtomicBool::new(false),
             mem,
+            tx: Mutex::new(None),
         }
     }
     async fn tick(&self) {
-        self.state.lock().run(self.mem.clone(), &self.cached_state, &self.instruction_done).await
+        let stuff = Mos6502Stuff {
+            mem: self.mem.clone(),
+            cached_state: &self.cached_state,
+            instruction_done: &self.instruction_done,
+            trace_tx: &self.tx
+        };
+        self.state.lock().run(stuff).await
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
-        &{|b| un6502::disasm(b).to_string()}
+        &{|bytes, addr| un6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
     }
     fn regs(&self) -> &Mutex<Mos6502State> {
         &self.cached_state
+    }
+    fn trace_start(&self, tx: mpsc::Sender<String>) {
+        *self.tx.lock() = Some(tx);
+    }
+    fn trace_end(&self) {
+        *self.tx.lock() = None;
     }
 }
 
@@ -91,7 +115,13 @@ impl Mos6502State {
             flags: ProcFlags::new().with_unused(true).with_zero(true).with_irq_disable(true),
         }
     }
-    async fn run(&mut self, memory: MemoryWrapper, other_state: &Mutex<Mos6502State>, inst_done: &AtomicBool) {
+    async fn run(&mut self, stuff: Mos6502Stuff<'_>) {
+        let Mos6502Stuff {
+            mem: memory,
+            cached_state: other_state,
+            instruction_done: inst_done,
+            trace_tx,
+        } = stuff;
         // pretend to do the init stuff
         pending!(); pending!();
         pending!(); pending!();
@@ -99,8 +129,10 @@ impl Mos6502State {
         let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
         self.pc = u16::from_le_bytes([lo, hi]);
         let mut adios = false;
+        let mut cycles = 6;
 
         loop {
+            cycles += 1;
             let mut jumpto = None;
             use un6502::Opcode;
             
@@ -271,14 +303,21 @@ impl Mos6502State {
                 other => todo!("{:?}", other),
             }
 
+            inst_done.store(true, Ordering::SeqCst);
+            other_state.lock().clone_from(self);
+            if let Some(tx) = trace_tx.lock().as_mut() {
+                let byte = memory.fetch8_fast(self.pc as u32);
+                let string = format!(
+                    "{:04X} {:x} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+                    self.pc, byte, self.a, self.x, self.y, self.flags.into_bits(), self.sp, cycles);
+                tx.send(string).unwrap();
+            }
+
             if adios || jumpto == Some(0x00) || jumpto == Some(0x01) {
                 panic!("\r\nno i won't do it are you stupid\r
 State on exit just before it: {:#x?}\r", other_state.lock());
             }
             self.pc = jumpto.unwrap_or(self.pc.wrapping_add(inst.len()));
-
-            inst_done.store(true, Ordering::SeqCst);
-            other_state.lock().clone_from(self);
         }
     }
     

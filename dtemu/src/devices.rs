@@ -20,6 +20,28 @@ pub mod console_prelude {
     pub use crossterm::event::Event;
 }
 
+mod blargg {
+    use super::prelude::*;
+    #[derive(Debug)]
+    pub struct Dumper();
+    impl Device for Dumper {
+        fn as_mmio(&mut self) -> Option<&mut dyn Mmio> {
+            Some(self)
+        }
+    }
+    impl Mmio for Dumper {
+        fn new(compats: &[&str], reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> {
+            Box::new(Self())
+        }
+        fn read8(&mut self, _: u32) -> u8 { 0 }
+        fn write8(&mut self, _: u32, val: u8) {
+            if val != 0x80 {
+                eprintln!("{:x}", val);
+            }
+        }
+    }
+}
+
 pub trait Device: core::fmt::Debug + Send {
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { None }
     fn as_console_output(&mut self) -> Option<&mut dyn ConsoleOutput> { None }
@@ -64,6 +86,8 @@ pub fn probe(compats: Vec<&str>, node: DevTreeNode) -> Option<Box<dyn Mmio>> {
             "memory" => Some(memory::Memory::new(&compats, reg, &node)),
             "motorola,mc6821" => Some(mc6821::Mc6821::new(&compats, reg, &node)),
             "generic-rom" => Some(memory::Rom::new(&compats, reg, &node)),
+
+            "blargg,instr_test_v4_output" => Some(blargg::Dumper::new(&compats, reg, &node)),
             _ => None,
         };
         if dev.is_some() {

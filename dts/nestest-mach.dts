@@ -1,0 +1,41 @@
+/dts-v1/;
+
+/ {
+	compatible = "nestest", "mos,6502";
+	model = "nestest";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "mos,6502";
+			reg = <0 0>;
+		};
+	};
+
+	main_clk: clock {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <21477272>;
+	};
+	
+	memory@0 {
+		compatible = "memory";
+		//mirror-size = <0x800>;
+		reg = <0x200 0x500>;
+	};
+
+	rom@200 {
+		compatible = "generic-rom";
+		rom,name = "instr_test_v4";
+		reg = <0x200 0x8000>;
+	};
+
+	memory@6000 {
+		compatible = "blargg,instr_test_v4-output";
+		reg = <6000 1>;
+	};
+};

@@ -18,7 +18,7 @@ impl Device for Mc6821 {
 
 impl Mmio for Mc6821 {
     fn read8(&mut self, addr: u32) -> u8 {
-        match addr {
+        match addr & 0x3 {
             // keyboard data
             0 => self.next_char.take().unwrap_or(0) | 0x80,
             // keyboard control
@@ -50,7 +50,7 @@ impl Mmio for Mc6821 {
         }
     }
     fn write8(&mut self, addr: u32, mut val: u8) {
-        match addr {
+        match addr & 0x3 {
             // keyboard input
             0 => (),
             // keyboard control

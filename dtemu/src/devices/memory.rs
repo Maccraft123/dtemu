@@ -11,27 +11,28 @@ pub struct Rom {
 impl Device for Rom {
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
     fn node_name(&self) -> &str { &self.name }
-    fn new(_compats: &[&str], reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> {
-        let len = reg.expect("reg has to be supplied with a memory device").1 as usize;
-        let name = node.name().unwrap().to_string();
-        let mut prop_iter = node.props();
-        let mut rom_name = None;
-        let mut write = false;
-        while let Some(prop) = prop_iter.next().unwrap() {
-            if prop.name().unwrap() == "rom,name" {
-                rom_name = Some(prop.str().unwrap().to_string());
-            } else if prop.name().unwrap() == "rom,allow-write" {
-                write = true;
-            }
+    fn new(node: &FdtNode<'_, '_>) -> Box<Self> {
+        let len = node.reg()
+            .expect("reg has to be supplied with a memory device")
+            .next().unwrap()
+            .size.unwrap();
+        let name = node.name.to_string();
+        let rom_name;
+        if let Some(romname) = node.property("rom,name") {
+            rom_name = romname.as_str().unwrap().to_string();
+        } else {
+            panic!("rom,name must exist and contain human-readable name of the ROM");
         }
+        let write = node.property("rom,allow-write").is_some();
+
         Box::new(Self {
                 data: vec![0; len],
-                rom_name: rom_name.expect("rom,name must contain human-readable name of the ROM"),
+                rom_name,
                 allow_write: write,
                 name,
             }
         )
-    }
+    }    
 }
 
 impl Mmio for Rom {
@@ -65,9 +66,12 @@ pub struct Memory {
 impl Device for Memory {
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
     fn node_name(&self) -> &str { &self.name }
-    fn new(_compats: &[&str], reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> {
-        let len = reg.expect("reg has to be supplied with a memory device").1 as usize;
-        let name = node.name().unwrap().to_string();
+    fn new(node: &FdtNode<'_, '_>) -> Box<Self> {
+        let len = node.reg()
+            .expect("reg has to be supplied with a memory device")
+            .next().unwrap()
+            .size.unwrap();
+        let name = node.name.to_string();
         Box::new(Self { data: vec![0; len], name } )
     }
 }

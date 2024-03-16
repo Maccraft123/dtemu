@@ -8,11 +8,10 @@ use std::{io, thread, fs};
 use std::sync::Arc;
 use std::sync::atomic::{Ordering, AtomicBool};
 use parking_lot::{Condvar, Mutex};
-use fdt_rs::prelude::*;
-use fdt_rs::base::DevTree;
 use std::collections::HashMap;
 use crossterm::event::{self, Event};
 use std::time::Duration;
+use fdt::Fdt;
 
 mod devices;
 mod mos6502;
@@ -68,16 +67,15 @@ impl MemoryMap {
     fn new() -> Self {
         Self { segments: Vec::new() }
     }
-    fn insert_mmio_device(&mut self, device: Box<dyn Mmio>, start: u32, size: u32) {
-        self.segments.push(Segment{device, start, size})
+    fn insert_mmio_device(&mut self, device: Box<dyn Mmio>, start: u32, size: u32, mirror_size: u32) {
+        self.segments.push(Segment{device, start, size, mirror_size})
     }
     fn read8(&mut self, addr: u32) -> u8 {
         let mut data = None;
         for seg in self.segments.iter_mut() {
             if addr >= seg.start && addr < (seg.start + seg.size) {
-                data = Some(seg.device.read8(addr - seg.start));
+                data = Some(seg.device.read8((addr - seg.start) % seg.mirror_size));
             }
-        
         }
         //eprintln!("Invalid memory read at {:x}\r", addr);
         data.unwrap_or(0)
@@ -85,11 +83,9 @@ impl MemoryMap {
     }
     fn write8(&mut self, mut addr: u32, val: u8) {
         let mut written = false;
-        // FIXME
-        if addr == 0xd0f2 { addr = 0xd012; };
         for seg in self.segments.iter_mut() {
             if addr >= seg.start && addr < (seg.start + seg.size) {
-                seg.device.write8(addr - seg.start, val);
+                seg.device.write8((addr - seg.start) % seg.mirror_size, val);
                 written = true;
             }
         }
@@ -103,6 +99,7 @@ impl MemoryMap {
 struct Segment {
     start: u32,
     size: u32,
+    mirror_size: u32,
     device: Box<dyn Mmio>,
 }
 
@@ -131,9 +128,6 @@ struct Args {
     #[arg(long)]
     dump_cpu_state: bool,
 }
-
-#[repr(align(4))]
-struct Align4<T>(T);
 
 struct EmuTui {
     console_recv: mpsc::Receiver<char>,
@@ -425,47 +419,28 @@ fn main() {
     }
 
     // setup the machine itself
-    let dt_data = Align4(fs::read(&args.machine)
-        .expect("Failed to load DTB"));
+    let dt_data = fs::read(&args.machine)
+        .expect("Failed to load DTB");
 
-    let devtree = unsafe {
-        assert!(dt_data.0.len() >= DevTree::MIN_HEADER_SIZE);
-        let size = DevTree::read_totalsize(&dt_data.0)
-            .expect("Failed to read out total DTB size");
-        let buf = &dt_data.0[..size];
-        DevTree::new(buf)
-            .expect("Failed creation of DevTree index")
-    };
+    let devtree = Fdt::new(&dt_data)
+        .expect("Failed to parse DTB");
 
     let mut mem = MemoryMap::new();
-    let mut node_iter = devtree.nodes();
-    let root = devtree.root().unwrap().unwrap();
-    while let Some(node) = node_iter.next().unwrap() {
-        if node == root { continue; }
-
-        let mut prop_iter = node.props();
-
-        let mut dev = None;
-        let mut reg = None;
-        while let Some(prop) = prop_iter.next().unwrap() {
-            match prop.name().unwrap() {
-                "compatible" => {
-                    let compat_strings: Vec<&str> = prop.iter_str().collect().unwrap();
-                    dev = devices::probe(compat_strings, prop.node());
-                },
-                "reg" => {
-                    reg = prop.u32(0).ok().zip(prop.u32(1).ok());
-                },
-                _ => (),
-            }
-        }
+    for node in devtree.all_nodes() {
+        let Some(mut reg) = node.reg() else {
+            eprintln!("Missing reg property for {}", node.name);
+            continue;
+        };
+        let reg = reg.next().unwrap();
+        let (start, size) = (reg.starting_address as usize as u32, reg.size.unwrap_or(0) as u32);
+        let mirror_size = node.property("mirror-size")
+            .map(|prop| prop.as_usize())
+            .flatten()
+            .unwrap_or(size as usize) as u32;
+        let dev = devices::probe(&node);
 
         if let Some(device) = dev {
-            if let Some((start, size)) = reg {
-                mem.insert_mmio_device(device, start, size);
-            } else {
-                eprintln!("Missing reg property for {:?}", node.name());
-            }
+            mem.insert_mmio_device(device, start, size, mirror_size);
         }
     }
 

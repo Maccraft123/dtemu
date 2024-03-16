@@ -12,14 +12,12 @@ pub struct Mc6821 {
 
 impl Device for Mc6821 {
     fn node_name(&self) -> &str { &self.name }
-    fn new(_compats: &[&str], _reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> {
-        let name = node.name().unwrap().to_string();
-        //let len = reg.expect("reg has to be supplied with a memory-mapped device").1 as usize;
+    fn new(node: &FdtNode<'_, '_>) -> Box<Self> {
         Box::new(Self {
             output: None,
             input: None,
             next_char: None,
-            name,
+            name: node.name.to_string(),
         } )
     }
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
@@ -30,7 +28,7 @@ impl Device for Mc6821 {
 
 impl Mmio for Mc6821 {
     fn read8(&mut self, addr: u32) -> u8 {
-        match addr & 0x3 {
+        match addr % 4 {
             // keyboard data
             0 => self.next_char.take().unwrap_or(0) | 0x80,
             // keyboard control
@@ -62,7 +60,7 @@ impl Mmio for Mc6821 {
         }
     }
     fn write8(&mut self, addr: u32, mut val: u8) {
-        match addr & 0x3 {
+        match addr % 4 {
             // keyboard input
             0 => (),
             // keyboard control

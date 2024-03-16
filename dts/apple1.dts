@@ -6,22 +6,28 @@
 	#address-cells = <1>;
 	#size-cells = <1>;
 
+	chosen {
+		main-clk = <&builtin_6502_clk>;
+		stdout-path = "pia@d010";
+		stdin-path = "pia@d010";
+	};
+
 	cpus {
 		#address-cells = <1>;
-		#size-cells = <1>;
+		#size-cells = <0>;
 		cpu@0 {
 			device_type = "cpu";
 			compatible = "mos,6502";
-			reg = <0 0>;
+			reg = <0>;
 			clocks = <&builtin_6502_clk>;
-
+			//dtemu,override-reset-vector = <0xff00>;
 		};
 	};
 	
 	builtin_6502_clk: clock {
-		compatible = "mos,6502-builtin-clk", "fixed-clock";
+		compatible = "mos,6502-builtin-clk","fixed-clock";
 		#clock-cells = <0>;
-		clock-frequency = <1000000>;
+		clock-frequency = <1022727>;
 	};
 
 	memory@0 {
@@ -29,21 +35,15 @@
 		reg = <0x0 0x8000>;
 	};
 
-	//pia@d010 {
-	//	compatible = "motorola,mc6821";
-	//	reg = <0xd000 0x100>;
-	//};
+	pia@d000 {
+		compatible = "motorola,mc6821";
+		reg = <0xd000 0x100>;
+		mirror-size = <4>;
+	};
 
-	//rom@e000 {
-	//	compatible = "generic-rom";
-	//	rom,name = "rc6502_8k";
-	//	reg = <0xe000 0x2000>;
-	//};
-
-	rom@0 {
+	rom@e000 {
 		compatible = "generic-rom";
-		rom,name = "test";
-		reg = <0x0000 0x10000>;
-		rom,allow-write;
+		rom,name = "rc6502_8k";
+		reg = <0xe000 0x2000>;
 	};
 };

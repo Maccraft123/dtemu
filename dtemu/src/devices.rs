@@ -1,9 +1,7 @@
 use crate::MemoryWrapper;
 
 use std::sync::mpsc;
-
-use fdt_rs::base::DevTreeNode;
-use fdt_rs::prelude::*;
+use fdt::node::FdtNode;
 
 pub mod mc6821;
 pub mod memory;
@@ -11,8 +9,7 @@ pub mod memory;
 pub mod prelude {
     pub use crate::MemoryWrapper;
     pub use super::{Device, Mmio, Console, ConsoleOutput, ConsoleInput};
-    pub use fdt_rs::prelude::*;
-    pub use fdt_rs::base::DevTreeNode;
+    pub use fdt::node::FdtNode;
 }
 
 pub mod console_prelude {
@@ -21,7 +18,7 @@ pub mod console_prelude {
 }
 
 pub trait Device: core::fmt::Debug + Send {
-    fn new(compats: &[&str], reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> where Self: Sized;
+    fn new(node: &FdtNode<'_, '_>) -> Box<Self> where Self: Sized;
     fn node_name(&self) -> &str;
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { None }
     fn as_console_output(&mut self) -> Option<&mut dyn ConsoleOutput> { None }
@@ -48,22 +45,15 @@ pub trait ConsoleInput: Device {
     fn attach_inchan(&mut self, channel: mpsc::Receiver<crossterm::event::Event>);
 }
 
-pub fn probe(compats: Vec<&str>, node: DevTreeNode) -> Option<Box<dyn Mmio>> {
-    println!("probing {:?}", compats);
-    let mut prop_iter = node.props();
-    let mut reg = None;
-    while let Some(prop) = prop_iter.next().unwrap() {
-        if prop.name().unwrap() == "reg" {
-            reg = prop.u32(0).ok().zip(prop.u32(1).ok());
-        }
-    }
-
+pub fn probe(node: &FdtNode<'_, '_>) -> Option<Box<dyn Mmio>> {
+    println!("probing {:?}", node.name);
     let mut dev: Option<Box<dyn Mmio>> = None;
-    for compatible in compats.iter() {
-        dev = match *compatible {
-            "memory" => Some(memory::Memory::new(&compats, reg, &node)),
-            "motorola,mc6821" => Some(mc6821::Mc6821::new(&compats, reg, &node)),
-            "generic-rom" => Some(memory::Rom::new(&compats, reg, &node)),
+    let compats = node.compatible()?;
+    for compatible in compats.all() {
+        dev = match compatible {
+            "memory" => Some(memory::Memory::new(node)),
+            "motorola,mc6821" => Some(mc6821::Mc6821::new(node)),
+            "generic-rom" => Some(memory::Rom::new(node)),
             _ => None,
         };
         if dev.is_some() {
@@ -72,7 +62,7 @@ pub fn probe(compats: Vec<&str>, node: DevTreeNode) -> Option<Box<dyn Mmio>> {
     }
 
     if dev.is_none() {
-        eprintln!("Warning: Failed to look up device for compatible strings {:?}", compats);
+        eprintln!("Warning: Failed to look up device for compatible strings {:?}", compats.all().collect::<Vec<&str>>());
     }
 
     dev

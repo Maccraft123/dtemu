@@ -252,7 +252,7 @@ impl EmuTui {
                     terminal = Some(Terminal::new(CrosstermBackend::new(io::stdout())).unwrap());
                 }
                 terminal.as_mut().unwrap().draw(|frame| {
-                    let mut cpu_regs = info.cpu_regs.lock();
+                    let cpu_regs = info.cpu_regs.lock();
                     let layout = Layout::horizontal([
                         Constraint::Min(1),
                         Constraint::Length(7),
@@ -454,7 +454,7 @@ fn main() {
                     dev = devices::probe(compat_strings, prop.node());
                 },
                 "reg" => {
-                    reg = Some((prop.u32(0).unwrap(), prop.u32(1).unwrap()));
+                    reg = prop.u32(0).ok().zip(prop.u32(1).ok());
                 },
                 _ => (),
             }
@@ -494,6 +494,7 @@ fn main() {
         if let Some(condev) = device.as_console_input() {
             if let Some(inp) = device_receiver.take() {
                 condev.attach_inchan(inp);
+                println!("Wired input to {}", device.node_name());
             } else {
                 eprintln!("Only one console input device may be active at any given moment");
             }

@@ -7,9 +7,21 @@ pub struct Mc6821 {
     output: Option<mpsc::Sender<char>>,
     input: Option<mpsc::Receiver<Event>>,
     next_char: Option<u8>,
+    name: String,
 }
 
 impl Device for Mc6821 {
+    fn node_name(&self) -> &str { &self.name }
+    fn new(_compats: &[&str], _reg: Option<(u32, u32)>, node: &DevTreeNode) -> Box<Self> {
+        let name = node.name().unwrap().to_string();
+        //let len = reg.expect("reg has to be supplied with a memory-mapped device").1 as usize;
+        Box::new(Self {
+            output: None,
+            input: None,
+            next_char: None,
+            name,
+        } )
+    }
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
     fn as_console_output(&mut self) -> Option<&mut dyn ConsoleOutput> { Some(self) }
     fn as_console_input(&mut self) -> Option<&mut dyn ConsoleInput> { Some(self) }
@@ -72,14 +84,6 @@ impl Mmio for Mc6821 {
             3 => (),
             _ => unreachable!(),
         }
-    }
-    fn new(_compats: &[&str], _reg: Option<(u32, u32)>, _node: &DevTreeNode) -> Box<Self> {
-        //let len = reg.expect("reg has to be supplied with a memory-mapped device").1 as usize;
-        Box::new(Self {
-            output: None,
-            input: None,
-            next_char: None,
-        } )
     }
 }
 

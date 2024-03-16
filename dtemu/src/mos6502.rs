@@ -3,7 +3,6 @@ use futures::pending;
 use crate::MemoryWrapper;
 use parking_lot::Mutex;
 use std::sync::mpsc;
-use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use un6502::Addressing;
@@ -128,7 +127,6 @@ impl Mos6502State {
         // woo reset vector
         let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
         self.pc = u16::from_le_bytes([lo, hi]);
-        let mut adios = false;
         let mut cycles = 6;
 
         loop {
@@ -199,11 +197,13 @@ impl Mos6502State {
                     let val = self.load8(&memory, inst.addressing()).await;
                     self.flags.set_carry(val & 0x80 != 0);
                     self.store8(&memory, inst.addressing(), val << 1).await;
+                    self.update_zn(val);
                 },
                 Opcode::Lsr => {
                     let val = self.load8(&memory, inst.addressing()).await;
                     self.flags.set_carry(val & 0x1 != 0);
                     self.store8(&memory, inst.addressing(), val >> 1).await;
+                    self.update_zn(val);
                 },
                 Opcode::Rol => {
                     let mut val = self.load8(&memory, inst.addressing()).await;
@@ -211,6 +211,7 @@ impl Mos6502State {
                     val = (val << 1) | self.flags.carry() as u8;
                     self.store8(&memory, inst.addressing(), val).await;
                     self.flags.set_carry(new_carry);
+                    self.update_zn(val);
                 },
                 Opcode::Ror => {
                     let mut val = self.load8(&memory, inst.addressing()).await;
@@ -218,6 +219,7 @@ impl Mos6502State {
                     val = (val >> 1) | (self.flags.carry() as u8 * 0x80);
                     self.store8(&memory, inst.addressing(), val).await;
                     self.flags.set_carry(new_carry);
+                    self.update_zn(val);
                 },
 
                 // Flag instructions
@@ -283,24 +285,24 @@ impl Mos6502State {
 
                 // Interrupts
                 Opcode::Brk => {
-                    //let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
-                    //jumpto = Some(u16::from_le_bytes([lo, hi]));
-                    //adios = true;
-                    //eprintln!("BRK encountered!");
+                    self.push8(&memory, ((self.pc & 0xff00) >> 8) as u8).await;
+                    self.push8(&memory, (self.pc & 0x00ff) as u8).await;
+                    self.push8(&memory, self.flags.into_stack()).await;
+                    self.flags.set_irq_disable(true);
+                    let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
+                    jumpto = Some(u16::from_le_bytes([lo, hi]));
                 },
-                //Opcode::Rti => ,
+                Opcode::Rti => todo!(),
 
                 // Other
                 Opcode::Bit => {
                     pending!();
                     let val = self.load8(&memory, inst.addressing()).await;
-                    self.flags.set_negative(val & 0x80 != 0);
-                    self.flags.set_overflow(val & 0x40 != 0);
+                    self.flags.set_negative(val & 0b1000_0000 != 0);
+                    self.flags.set_overflow(val & 0b0100_0000 != 0);
                     self.flags.set_zero((val & self.a) == 0);
                 },
                 Opcode::Nop => pending!(),
-
-                other => todo!("{:?}", other),
             }
 
             inst_done.store(true, Ordering::SeqCst);
@@ -313,7 +315,7 @@ impl Mos6502State {
                 tx.send(string).unwrap();
             }
 
-            if adios || jumpto == Some(0x00) || jumpto == Some(0x01) {
+            if jumpto == Some(0x00) || jumpto == Some(0x01) {
                 panic!("\r\nno i won't do it are you stupid\r
 State on exit just before it: {:#x?}\r", other_state.lock());
             }
@@ -322,12 +324,8 @@ State on exit just before it: {:#x?}\r", other_state.lock());
     }
     
     fn update_zn(&mut self, val: u8) -> u8 {
-        if val == 0 {
-            self.flags.set_zero(true);
-        } else {
-            self.flags.set_zero(false);
-            self.flags.set_negative(val & 0x80 != 0);
-        }
+        self.flags.set_zero(val == 0);
+        self.flags.set_negative(val & 0x80 != 0);
         val
     }
 

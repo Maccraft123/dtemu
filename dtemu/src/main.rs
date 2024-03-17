@@ -81,7 +81,7 @@ impl MemoryMap {
         data.unwrap_or(0)
         //data.expect(&format!("Invalid memory read at {:x}", addr))
     }
-    fn write8(&mut self, mut addr: u32, val: u8) {
+    fn write8(&mut self, addr: u32, val: u8) {
         let mut written = false;
         for seg in self.segments.iter_mut() {
             if addr >= seg.start && addr < (seg.start + seg.size) {
@@ -89,9 +89,9 @@ impl MemoryMap {
                 written = true;
             }
         }
-        if !written {
-            eprintln!("Invalid memory write: {:x} = {:x}\r", addr, val);
-        }
+        //if !written {
+        //    eprintln!("Invalid memory write: {:x} = {:x}\r", addr, val);
+        //}
     }
 }
 

@@ -1,0 +1,97 @@
+#include <generic-pia.h>
+
+/dts-v1/;
+
+/ {
+	compatible = "apple,1", "mos,6502";
+	model = "apple,1";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	chosen {
+		main-clk = <&builtin_6502_clk>;
+		stdout-path = "pia@d010";
+		stdin-path = "pia@d010";
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "mos,6502";
+			reg = <0>;
+			clocks = <&builtin_6502_clk>;
+			//dtemu,override-reset-vector = <0xff00>;
+		};
+	};
+	
+	builtin_6502_clk: clock {
+		compatible = "mos,6502-builtin-clk","fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <1022727>;
+	};
+
+	memory@0 {
+		compatible = "memory";
+		reg = <0x0 0x8000>;
+	};
+
+	vram@8000 {
+		compatible = "memory"; // XXX
+		reg = <0x8000 0x1000>;
+		mirror-size = <0x400>;
+	};
+
+	rom@9000 {
+		compatible = "generic-rom";
+		rom,name = "pet_expansion_9000";
+		reg = <0x9000 0x1000>;
+	};
+
+	rom@a000 {
+		compatible = "generic-rom";
+		rom,name = "pet_expansion_a000";
+		reg = <0xa000 0x1000>;
+	};
+
+	rom@c000 {
+		compatible = "generic-rom";
+		rom,name = "pet_basic";
+		reg = <0xc000 0x1000>;
+	};
+
+	rom@e000 {
+		compatible = "generic-rom";
+		rom,name = "pet_editor";
+		reg = <0xe000 0x800>;
+	};
+
+	rom@f000 {
+		compatible = "generic-rom";
+		rom,name = "pet_kernal";
+		reg = <0xf000 0x1000>;
+	};
+
+	pia@e810 {
+		compatible = "mos,6520";
+		gpio-controller;
+		#gpio-cells = <2>;
+		reg = <0xe810 0x10>;
+	};
+
+	pia@e820 {
+		compatible = "mos,6520";
+		reg = <0xe820 0x10>;
+	};
+
+	via@e840 {
+		reg = <0xe840 0x10>;
+	};
+
+	pia@d000 {
+		compatible = "motorola,mc6821";
+		reg = <0xd000 0x100>;
+		mirror-size = <4>;
+	};
+};

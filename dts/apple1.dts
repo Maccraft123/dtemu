@@ -1,3 +1,5 @@
+#include <generic-pia.h>
+
 /dts-v1/;
 
 / {
@@ -35,11 +37,32 @@
 		reg = <0x0 0x8000>;
 	};
 
-	pia@d000 {
+	pia: pia@d000 {
+//		gpio-controller;
+//		#gpio-cells = <1>;
 		compatible = "motorola,mc6821";
 		reg = <0xd000 0x100>;
 		mirror-size = <4>;
 	};
+
+//	keyboard {
+//		compatible = "apple,apple1-keyboard";
+//		key-gpios = <&pia PA0>, <&pia PA1>,
+//			<&pia PA2>, <&pia PA3>,
+//			<&pia PA4>, <&pia PA5>,
+//			<&pia PA6>, <&pia PA7>;
+//		strobe-gpios = <&pia CA1>;
+//	};
+
+//	display {
+//		compatible = "apple,apple1-display";
+//		char-gpios = <&pia PB0>, <&pia PB1>,
+//			<&pia PB2>, <&pia PB3>,
+//			<&pia PB4>, <&pia PB5>,
+//			<&pia PB6>;
+//		rda-gpios = <&pia CB1>;
+//		da-gpios = <&pia CB2>, <&pia PB7>;
+//	};
 
 	rom@e000 {
 		compatible = "generic-rom";

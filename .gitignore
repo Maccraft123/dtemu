@@ -1,1 +1,3 @@
 /target
+/dts/*.dtb
+/dt-bindings/src/*.rs

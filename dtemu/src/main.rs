@@ -103,17 +103,17 @@ struct Segment {
     device: Box<dyn Mmio>,
 }
 
-#[derive(Debug)]
 struct Machine {
-    mem: Arc<Mutex<MemoryMap>>,
+    mem: MemoryWrapper,
     console_in: Option<mpsc::Receiver<char>>,
     console_out: Option<mpsc::Sender<Event>>,
     console_size: (u8, u8),
+    cpu: Box<dyn for<'a> Cpu<'a>>,
 }
 
 impl Machine {
     fn new_mem_wrapper(&self) -> MemoryWrapper {
-        MemoryWrapper::new(Arc::clone(&self.mem))
+        self.mem.clone()
     }
 }
 
@@ -317,7 +317,7 @@ struct DebuggerInfo<'mach, 'cpu> {
     mem: MemoryWrapper,
     disasm_fn: &'static cpu::DisasmFn,
     run: &'mach AtomicBool,
-    cpu_dump: Option<mpsc::Receiver<String>>,
+    cpu_dump: Option<mpsc::Receiver<String>>, // FIXME
 }
 
 fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
@@ -326,9 +326,6 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
     let singlestep = AtomicBool::new(false);
     let do_a_step = Mutex::new(false);
     let do_a_step_condvar = Condvar::new();
-
-    let cpu = Mos6502::new(mach.new_mem_wrapper());
-    let mut cpu_fut = std::pin::pin!(cpu.tick());
 
     let mut tui = EmuTui {
         console_recv: mach.console_in.take().unwrap(),
@@ -339,7 +336,7 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
     let cpu_dump;
     if do_dump_cpu {
         let (tx, rx) = mpsc::channel();
-        cpu.trace_start(tx);
+        mach.cpu.trace_start(tx);
         cpu_dump = Some(rx);
     } else {
         cpu_dump = None;
@@ -350,14 +347,16 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
         singlestep: &singlestep,
         do_a_step: &do_a_step,
         do_a_step_condvar: &do_a_step_condvar,
-        cpu_regs: cpu.regs(),
+        cpu_regs: mach.cpu.regs(),
         mem: mach.new_mem_wrapper(),
-        disasm_fn: cpu.disasm_fn(),
+        disasm_fn: mach.cpu.disasm_fn(),
         cpu_dump,
     };
 
     thread::scope(|s| {
         futures::executor::block_on( async {
+
+            let mut cpu_fut = std::pin::pin!(mach.cpu.tick());
             s.spawn(|| tui.run(debugger_info));
 
             // Iterates once for every instruction
@@ -374,7 +373,7 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
                         break 'outer;
                     }
 
-                    if cpu.instruction_done() {
+                    if mach.cpu.instruction_done() {
                         break 'cycles;
                     }
                     if let Some(ref mut c) = do_cycles {
@@ -476,11 +475,31 @@ fn main() {
         }
     }
 
+    let mem = MemoryWrapper::new(Arc::new(Mutex::new(mem)));
+    let mut cpu = None;
+
+    if let Some(c) = devtree.cpus().next() {
+        let compatibles = c.property("compatible").unwrap();
+        for compat in compatibles.as_str().unwrap().split('\0') {
+            match compat {
+                "mos,6502" => cpu = Some(Mos6502::new(mem.clone())),
+                _ => ()
+            }
+            if cpu.is_some() {
+                break;
+            }
+        }
+    }
+    if cpu.is_none() {
+        panic!("Unsupported CPU");
+    }
+
     let mach = Machine {
-        mem: Arc::new(Mutex::new(mem)),
+        mem: mem.clone(),
         console_in: emu_receiver,
         console_out: emu_sender,
         console_size: size,
+        cpu: cpu.unwrap(),
     };
 
     run(mach, args.cycles, args.dump_cpu_state);

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-	"un6502",
+	"unasm",
 	"dtemu",
 	"dt-bindings",
 ]

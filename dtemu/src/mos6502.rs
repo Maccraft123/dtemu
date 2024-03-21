@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use un6502::Addressing;
+use unasm::mos6502::Addressing;
 use crate::cpu::{Cpu, CpuRegs, DisasmFn};
 
 #[bitfield(u8, order = Msb)]
@@ -63,36 +63,32 @@ pub struct Mos6502 {
     tx: Mutex<Option<mpsc::Sender<String>>>,
 }
 
-impl Cpu for Mos6502 {
-    type Instruction = un6502::Instruction;
-    type Registers = Mos6502State;
-    type TraceFormat = String;
-
-    fn new(mem: MemoryWrapper) -> Self {
-        Self {
+impl<'me> Cpu<'me> for Mos6502 {
+    fn new(mem: MemoryWrapper) -> Box<Self> {
+        Box::new(Self {
             state: Mutex::new(Mos6502State::new()),
             cached_state: Mutex::new(Mos6502State::new()),
             instruction_done: AtomicBool::new(false),
             mem,
             tx: Mutex::new(None),
-        }
+        })
     }
-    async fn tick(&self) {
+    fn tick(&'me self) -> std::pin::Pin<Box<dyn futures::Future<Output = ()> + 'me>> {
         let stuff = Mos6502Stuff {
             mem: self.mem.clone(),
             cached_state: &self.cached_state,
             instruction_done: &self.instruction_done,
             trace_tx: &self.tx
         };
-        self.state.lock().run(stuff).await
+        Box::pin(async { self.state.lock().run(stuff).await })
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
-        &{|bytes, addr| un6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
+        &{|bytes, addr| unasm::mos6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
     }
-    fn regs(&self) -> &Mutex<Mos6502State> {
+    fn regs(&self) -> &Mutex<dyn CpuRegs + Send + Sync> {
         &self.cached_state
     }
     fn trace_start(&self, tx: mpsc::Sender<String>) {
@@ -132,10 +128,10 @@ impl Mos6502State {
         loop {
             cycles += 1;
             let mut jumpto = None;
-            use un6502::Opcode;
+            use unasm::mos6502::Opcode;
             
 
-            let inst = un6502::decode_u8(memory.fetch8(self.pc as u32).await);
+            let inst = unasm::mos6502::decode_u8(memory.fetch8(self.pc as u32).await);
             inst_done.store(false, Ordering::SeqCst);
 
             match inst.opcode() {

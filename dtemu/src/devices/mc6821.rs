@@ -2,6 +2,8 @@ use crate::devices::console_prelude::*;
 use std::sync::mpsc;
 use crossterm::event::KeyCode;
 
+// this entire file is a giant fucking hack
+
 #[derive(Debug)]
 pub struct Mc6821 {
     output: Option<mpsc::Sender<char>>,

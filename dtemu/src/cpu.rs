@@ -5,23 +5,19 @@ use crate::MemoryWrapper;
 
 pub type DisasmFn = fn(&[u8], Option<u32>) -> String;
 
-pub trait Cpu {
-    type Instruction: fmt::Display;
-    type Registers: CpuRegs;
-    type TraceFormat: fmt::Display;
-
+pub trait Cpu<'me> {
     /// Makes a new instance of a struct implementing Cpu
-    fn new(_: MemoryWrapper) -> Self where Self: Sized;
+    fn new(_: MemoryWrapper) -> Box<Self> where Self: Sized;
     /// Runs the cpu execution loop, with each clock cycle being represented
     /// by an async pending!()
-    async fn tick(&self);
-    fn regs(&self) -> &Mutex<Self::Registers>;
+    fn tick(&'me self) -> std::pin::Pin<Box<dyn futures::Future<Output = ()> + 'me>>;
+    fn regs(&self) -> &Mutex<dyn CpuRegs + Send + Sync>;
     /// If the Cpu just finished executing an instruction
     fn instruction_done(&self) -> bool;
     /// Function pointer to the function to turn bytes into a disassembled
     /// instruction
     fn disasm_fn(&self) -> &'static DisasmFn;
-    fn trace_start(&self, _: mpsc::Sender<Self::TraceFormat>);
+    fn trace_start(&self, _: mpsc::Sender<String>);
     fn trace_end(&self);
 }
 

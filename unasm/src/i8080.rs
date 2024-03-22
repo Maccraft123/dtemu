@@ -11,6 +11,7 @@ fn b3_to_u8(b1: bool, b2: bool, b3: bool) -> u8 {
     b1 as u8 * 0b100 | b2 as u8 * 0b010 | b3 as u8 * 0b001
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u8)]
 /// Represents the Source/Destination register in the opcode
 pub enum Reg {
@@ -30,9 +31,7 @@ impl Reg {
         if byte & 0b1000 != 0 {
             panic!()
         } else {
-            unsafe {
-                mem::transmute(byte)
-            }
+            unsafe { mem::transmute(byte) }
         }
     }
     fn from_bits(b1: bool, b2: bool, b3: bool) -> Reg {
@@ -40,13 +39,14 @@ impl Reg {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[repr(u8)]
 /// Represents the Register Pair field in the opcode
 pub enum RegPair {
     Bc = 0b00,
     De = 0b01,
     Hl = 0b10,
-    Sp = 0b11
+    Sp = 0b11,
 }
 
 impl RegPair {
@@ -58,8 +58,25 @@ impl RegPair {
             (true, true) => Self::Sp,
         }
     }
+    pub fn low(&self) -> Reg {
+        match self {
+            Self::Bc => Reg::C,
+            Self::De => Reg::E,
+            Self::Hl => Reg::L,
+            Self::Sp => panic!("what no don't"),
+        }
+    }
+    pub fn high(&self) -> Reg {
+        match self {
+            Self::Bc => Reg::B,
+            Self::De => Reg::D,
+            Self::Hl => Reg::H,
+            Self::Sp => panic!("what no don't"),
+        }
+    }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Copy)]
 #[repr(u8)]
 /// Condition field in conditional CALL, JMP and RET instructions
 pub enum Condition {
@@ -87,14 +104,13 @@ impl Condition {
         if byte & 0b1000 != 0 {
             panic!()
         } else {
-            unsafe {
-                mem::transmute(byte)
-            }
+            unsafe { mem::transmute(byte) }
         }
     }
 }
 
 /// A form of decoded 8080/8085/Z80 instruction that's easy to work with in Rust.
+#[derive(Debug, Clone)]
 pub enum Instruction {
     /// Move register to register
     Mov(Reg, Reg),
@@ -200,7 +216,7 @@ pub enum Instruction {
     Sphl,
     /// Read input port into A
     In(u8),
-    /// Writ A to output port
+    /// Write A to output port
     Out(u8),
     /// Enable interrupts
     Ei,
@@ -213,14 +229,29 @@ pub enum Instruction {
 }
 
 impl Instruction {
+    pub fn len(&self) -> usize {
+        use Instruction::*;
+        match self {
+            Hlt | Mov(..) | Xchg | Add(..) | Adc(..) | Sub(..) | Sbb(..) | Inr(..) | Dcr(..)
+            | Inx(..) | Dcx(..) | Dad(..) | Daa | Ana(..) | Ora(..) | Xra(..) | Cmp(..) | Rlc
+            | Rrc | Ral | Rar | Cma | Cmc | Stc | Ret | R(..) | Rst(..) | Pchl | Push(..)
+            | Pop(..) | Xthl | Sphl | Ei | Di | Nop => 1,
+            Mvi(..) | Adi(..) | Aci(..) | Sui(..) | Sbi(..) | Ani(..) | Ori(..) | Xri(..)
+            | Cpi(..) | In(..) | Out(..) => 2,
+            Lxi(..) | Lda(..) | Sta(..) | Lhld(..) | Shld(..) | Ldax(..) | Stax(..) | Jmp(..)
+            | J(..) | Call(..) | C(..) => 3,
+        }
+    }
     pub fn decode_from(bytes: &[u8]) -> Self {
         // TODO: is this good? helps me not fuck up the pattern matching below
         #![deny(unreachable_patterns)]
 
         use Instruction::*;
         let b = bytes[0].view_bits::<Msb0>();
-        let bits = (b[0] as u8, b[1] as u8, b[2] as u8, b[3] as u8,
-                    b[4] as u8, b[5] as u8, b[6] as u8, b[7] as u8);
+        let bits = (
+            b[0] as u8, b[1] as u8, b[2] as u8, b[3] as u8, b[4] as u8, b[5] as u8, b[6] as u8,
+            b[7] as u8,
+        );
 
         let dst = Reg::from_bits(b[2], b[3], b[4]);
         let src = Reg::from_bits(b[5], b[6], b[7]);
@@ -252,6 +283,8 @@ impl Instruction {
             (0, 0, _, _, 0, 0, 1, 1) => Inx(rp),
             (0, 0, _, _, 1, 0, 1, 1) => Dcx(rp),
             (0, 0, _, _, 1, 0, 0, 1) => Dad(rp),
+            (0, 0, _, _, 0, 0, 1, 0) => Stax(rp),
+            (0, 0, _, _, 1, 0, 1, 0) => Ldax(rp),
             (0, 0, 1, 0, 0, 1, 1, 1) => Daa,
             (1, 0, 1, 0, 0, _, _, _) => Ana(src),
             (1, 1, 1, 0, 0, 1, 1, 0) => Ani(op),
@@ -271,6 +304,7 @@ impl Instruction {
             (1, 1, 0, 0, 0, 0, 1, 1) => Jmp(op16),
             (1, 1, _, _, _, 0, 1, 0) => J(cond, op16),
             (1, 1, 0, 0, 1, 1, 0, 1) => Call(op16),
+            (1, 1, _, _, _, 1, 0, 0) => C(cond, op16),
             (1, 1, 0, 0, 1, 0, 0, 1) => Ret,
             (1, 1, _, _, _, 0, 0, 0) => R(cond),
             (1, 1, _, _, _, 1, 1, 1) => Rst(dst as u8),
@@ -284,7 +318,7 @@ impl Instruction {
             (1, 1, 1, 1, 1, 0, 1, 1) => Ei,
             (1, 1, 1, 1, 0, 0, 1, 1) => Di,
             (0, 0, 0, 0, 0, 0, 0, 0) => Nop,
-            _ => panic!(),
+            _ => panic!("unknown opcode {:x}", bytes[0]),
         }
     }
 }

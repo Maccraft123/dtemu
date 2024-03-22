@@ -15,11 +15,10 @@ use fdt::Fdt;
 
 mod devices;
 mod mos6502;
+mod i8080;
 mod cpu;
 
 use cpu::{Cpu, CpuRegs};
-
-use mos6502::Mos6502;
 
 use devices::{Mmio};
 
@@ -36,9 +35,9 @@ impl MemoryWrapper {
     fn new(ptr: Arc<Mutex<MemoryMap>>) -> Self {
         Self { ptr }
     }
-    //fn set8_fast(&self, addr: u32, val: u8) {
-    //    self.ptr.lock().write8(addr, val)
-    //}
+    fn set8_fast(&self, addr: u32, val: u8) {
+        self.ptr.lock().write8(addr, val)
+    }
     fn fetch8_fast(&self, addr: u32) -> u8 {
         self.ptr.lock().read8(addr)
     }
@@ -476,13 +475,14 @@ fn main() {
     }
 
     let mem = MemoryWrapper::new(Arc::new(Mutex::new(mem)));
-    let mut cpu = None;
+    let mut cpu: Option<Box<dyn for<'a> Cpu<'a>>> = None;
 
     if let Some(c) = devtree.cpus().next() {
         let compatibles = c.property("compatible").unwrap();
         for compat in compatibles.as_str().unwrap().split('\0') {
             match compat {
-                "mos,6502" => cpu = Some(Mos6502::new(mem.clone())),
+                "mos,6502" => cpu = Some(mos6502::Mos6502::new(mem.clone())),
+                "intel,8080" => cpu = Some(i8080::Intel8080::new(mem.clone())),
                 _ => ()
             }
             if cpu.is_some() {

@@ -70,15 +70,13 @@ impl MemoryMap {
         self.segments.push(Segment{device, start, size, mirror_size})
     }
     fn read8(&mut self, addr: u32) -> u8 {
-        let mut data = None;
         for seg in self.segments.iter_mut() {
             if addr >= seg.start && addr < (seg.start + seg.size) {
-                data = Some(seg.device.read8((addr - seg.start) % seg.mirror_size));
+                return seg.device.read8((addr - seg.start) % seg.mirror_size);
+                //data = Some(seg.device.read8((addr - seg.start)));
             }
         }
-        //eprintln!("Invalid memory read at {:x}\r", addr);
-        data.unwrap_or(0)
-        //data.expect(&format!("Invalid memory read at {:x}", addr))
+        0
     }
     fn write8(&mut self, addr: u32, val: u8) {
         let mut written = false;
@@ -354,7 +352,6 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
 
     thread::scope(|s| {
         futures::executor::block_on( async {
-
             let mut cpu_fut = std::pin::pin!(mach.cpu.tick());
             s.spawn(|| tui.run(debugger_info));
 

@@ -15,15 +15,21 @@
 			//dtemu,override-reset-vector = <0xff00>;
 		};
 	};
-	memory@0 {
-		compatible = "memory";
-		reg = <0x0 0x10000>;
-	};
 
 	rom@100 {
 		compatible = "generic-rom";
 		rom,name = "tst8080";
 		rom,allow-write;
 		reg = <0x100 0x6000>;
+	};
+
+	memory@0 {
+		compatible = "memory";
+		reg = <0x0 0x100>;
+	};
+
+	memory@6100 {
+		compatible = "memory";
+		reg = <0x6100 0x9f00>;
 	};
 };

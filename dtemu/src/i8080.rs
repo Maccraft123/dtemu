@@ -114,7 +114,7 @@ impl Intel8080State {
         };
         self.update_zsp(ret);
         if op == LogicalOp::And {
-            self.psw.set_aux_carry(((val2 | val2) & 0b1000) != 0);
+            self.psw.set_aux_carry(((val1 | val2) & 0b1000) != 0);
         } else {
             self.psw.set_aux_carry(false);
         }
@@ -138,7 +138,7 @@ impl Intel8080State {
                 
                 let val = val1.wrapping_sub(val2);
                 self.psw.set_carry(val2 > val1);
-                self.psw.set_aux_carry((val2 & 0x0f) > (val1 & 0x0f));
+                self.psw.set_aux_carry((val2 & 0x0f) <= (val1 & 0x0f));
                 (val & 0xff) as u8
             },
         };
@@ -233,8 +233,8 @@ impl Intel8080State {
 
     async fn pop_rp(&mut self, mem: &MemoryWrapper, rp: RegPair) {
         if rp == RegPair::Sp {
-            self.psw = self.pop8(mem).await.into();
             self.a = self.pop8(mem).await;
+            self.psw = self.pop8(mem).await.into();
         } else {
             let val = self.pop16(mem).await;
             self.set_regpair(mem, rp, val);
@@ -243,8 +243,8 @@ impl Intel8080State {
 
     async fn push_rp(&mut self, mem: &MemoryWrapper, rp: RegPair) {
         if rp == RegPair::Sp {
-            self.push8(mem, self.a).await;
             self.push8(mem, self.psw.into_bits()).await;
+            self.push8(mem, self.a).await;
         } else {
             self.push16(mem, self.regpair(mem, rp)).await;
         }

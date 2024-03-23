@@ -235,10 +235,10 @@ impl Instruction {
             Hlt | Mov(..) | Xchg | Add(..) | Adc(..) | Sub(..) | Sbb(..) | Inr(..) | Dcr(..)
             | Inx(..) | Dcx(..) | Dad(..) | Daa | Ana(..) | Ora(..) | Xra(..) | Cmp(..) | Rlc
             | Rrc | Ral | Rar | Cma | Cmc | Stc | Ret | R(..) | Rst(..) | Pchl | Push(..)
-            | Pop(..) | Xthl | Sphl | Ei | Di | Nop => 1,
+            | Pop(..) | Xthl | Sphl | Ei | Di | Nop | Ldax(..) | Stax(..) => 1,
             Mvi(..) | Adi(..) | Aci(..) | Sui(..) | Sbi(..) | Ani(..) | Ori(..) | Xri(..)
             | Cpi(..) | In(..) | Out(..) => 2,
-            Lxi(..) | Lda(..) | Sta(..) | Lhld(..) | Shld(..) | Ldax(..) | Stax(..) | Jmp(..)
+            Lxi(..) | Lda(..) | Sta(..) | Lhld(..) | Shld(..) | Jmp(..)
             | J(..) | Call(..) | C(..) => 3,
         }
     }

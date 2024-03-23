@@ -1,3 +1,11 @@
 /target
 /dts/*.dtb
 /dt-bindings/src/*.rs
+*lst
+*LST
+*com
+*COM
+*rom
+*ROM
+*asm
+*ASM

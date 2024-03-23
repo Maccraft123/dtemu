@@ -24,6 +24,6 @@
 		compatible = "generic-rom";
 		rom,name = "tst8080";
 		rom,allow-write;
-		reg = <0x100 0x2000>;
+		reg = <0x100 0x6000>;
 	};
 };

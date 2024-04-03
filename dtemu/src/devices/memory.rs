@@ -6,6 +6,7 @@ pub struct Rom {
     rom_name: String,
     allow_write: bool,
     name: String,
+    fw_offset: u32,
 }
 
 impl Device for Rom {
@@ -24,12 +25,16 @@ impl Device for Rom {
             panic!("rom,name must exist and contain human-readable name of the ROM");
         }
         let write = node.property("rom,allow-write").is_some();
+        let fw_offset = node.property("rom,fw-offset")
+            .and_then(|p| p.as_usize())
+            .unwrap_or(0) as u32;
 
         Box::new(Self {
                 data: vec![0; len],
                 rom_name,
                 allow_write: write,
                 name,
+                fw_offset,
             }
         )
     }    

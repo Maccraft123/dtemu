@@ -1,26 +1,37 @@
 use bitvec::prelude::*;
+use super::{Operand};
 use core::mem;
-
-// MSB first
-fn b2_to_u8(b1: u8, b2: u8) -> u8 {
-    b1 * 0b010 | b2 * 0b001
-}
 
 // MSB first
 fn b3_to_u8(b1: bool, b2: bool, b3: bool) -> u8 {
     b1 as u8 * 0b100 | b2 as u8 * 0b010 | b3 as u8 * 0b001
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+fn l(val: u16) -> u8 {
+    (val & 0xff) as u8
+}
+
+fn b(val: u16) -> u8 {
+    ((val & 0xff00) >> 8) as u8
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Operand)]
 #[repr(u8)]
 /// Represents the Source/Destination register in the opcode
 pub enum Reg {
+    /// The A register
     A = 0b111,
+    /// The B register
     B = 0b000,
+    /// The C register
     C = 0b001,
+    /// The D register
     D = 0b010,
+    /// The E register
     E = 0b011,
+    /// The H register
     H = 0b100,
+    /// The L register
     L = 0b101,
     /// Memory reference through address in H:L
     M = 0b110,
@@ -37,15 +48,26 @@ impl Reg {
     fn from_bits(b1: bool, b2: bool, b3: bool) -> Reg {
         Reg::from_byte(b3_to_u8(b1, b2, b3))
     }
+    pub fn to_dst_byte(self) -> u8 {
+        (self as u8) << 3
+    }
+    pub fn to_src_byte(self) -> u8 {
+        self as u8
+    }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Operand)]
 #[repr(u8)]
 /// Represents the Register Pair field in the opcode
 pub enum RegPair {
+    /// BC register pair
     Bc = 0b00,
+    /// DE register pair
     De = 0b01,
+    /// HL register pair
     Hl = 0b10,
+    /// SP register pair, or PSW on push/pop operations
+    #[operand(alias = "psw")]
     Sp = 0b11,
 }
 
@@ -57,6 +79,9 @@ impl RegPair {
             (true, false) => Self::Hl,
             (true, true) => Self::Sp,
         }
+    }
+    fn to_byte(self) -> u8 {
+        (self as u8) << 4
     }
     pub fn low(&self) -> Reg {
         match self {
@@ -76,25 +101,33 @@ impl RegPair {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Copy)]
+#[derive(Debug, Clone, Eq, PartialEq, Copy, Operand)]
 #[repr(u8)]
 /// Condition field in conditional CALL, JMP and RET instructions
 pub enum Condition {
     /// Zero flag not set
+    #[operand(rename = "nz")]
     NonZero = 0b000,
     /// Zero flag set
+    #[operand(rename = "z")]
     Zero = 0b001,
     /// Carry flag not set
+    #[operand(rename = "nc")]
     NoCarry = 0b010,
     /// Carry flag set
+    #[operand(rename = "c")]
     Carry = 0b011,
     /// Parity flag not set
+    #[operand(rename = "po")]
     Odd = 0b100,
     /// Parity flag set
+    #[operand(rename = "pe")]
     Even = 0b101,
     /// Sign flag not set
+    #[operand(rename = "p")]
     Plus = 0b110,
     /// Sign flag set
+    #[operand(rename = "m")]
     Minus = 0b111,
 }
 
@@ -107,10 +140,13 @@ impl Condition {
             unsafe { mem::transmute(byte) }
         }
     }
+    pub fn to_byte(self) -> u8 {
+        (self as u8) << 3
+    }
 }
 
-/// A form of decoded 8080/8085/Z80 instruction that's easy to work with in Rust.
-#[derive(Debug, Clone)]
+/// A form of a decoded 8080/8085 instruction that's easy to work with in Rust.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instruction {
     /// Move register to register
     Mov(Reg, Reg),
@@ -120,15 +156,15 @@ pub enum Instruction {
     Lxi(RegPair, u16),
     /// Load A from memory
     Lda(u16),
-    /// Store A from memory
+    /// Store A to memory
     Sta(u16),
     /// Load H:L from memory
     Lhld(u16),
     /// Store H:L to memory
     Shld(u16),
-    /// Load indirect through BC or DE
+    /// Load A using address in BC or DE
     Ldax(RegPair),
-    /// Store indirect through BC or DE
+    /// Store A using address in BC or DE
     Stax(RegPair),
     /// Exchange DE and HL content
     Xchg,
@@ -148,17 +184,23 @@ pub enum Instruction {
     Sbb(Reg),
     /// Subtract immediate from A with borrow
     Sbi(u8),
-    /// Increment register
+    /// Increment register, setting aux carry if low nibble of A is 0x0 after addition, and
+    /// updating Zero, Sign and Parity flags based on resulting value
     Inr(Reg),
-    /// Decrement registser
+    /// Decrement register, setting aux carry if low nibble of A is not equal to 0xf after
+    /// addition, and updating Zero, Sign and Parity flags based on resulting value
     Dcr(Reg),
     /// Increment register pair
     Inx(RegPair),
     /// Decrement register pair
     Dcx(RegPair),
-    /// Add register pair to HL
+    /// (Double Add) Add register pair to HL, setting carry on overflow
     Dad(RegPair),
-    /// Decimal adjust accumulator
+    /// Decimal adjust accumulator, converting a binary value to a BCD value.
+    /// If aux carry is set or low nibble of A is bigger than 9, add 0x06 to A
+    /// If carry is set, high nibble of A is bigger than 9 add 0x60 to A
+    /// If there was a carry out of low nibble of A, set aux carry, otherwise reset it
+    /// Copy resulting value to A and set Zero, Sign and Parity flags based on result
     Daa,
     /// AND register with A
     Ana(Reg),
@@ -172,21 +214,21 @@ pub enum Instruction {
     Xra(Reg),
     /// XOR immediate with A
     Xri(u8),
-    /// Compare register with A
+    /// Compare register with A by subtracting and discarding resulting value
     Cmp(Reg),
-    /// Compare immediate with A
+    /// Compare immediate with A by subtracting and discarding resulting value
     Cpi(u8),
-    /// Rotate A left
+    /// Rotate left circular
     Rlc,
-    /// Rotate A right
+    /// Rotate right circular
     Rrc,
-    /// Rotate A left through carry
+    /// Rotate left through carry
     Ral,
-    /// Rorate A right through carry
+    /// Rotate right through carry
     Rar,
-    /// Compliment A
+    /// Compliment(invert/XOR 0xff) A
     Cma,
-    /// Compliment carry flag
+    /// Compliment(invert) carry flag
     Cmc,
     /// Set carry flag
     Stc,
@@ -194,25 +236,27 @@ pub enum Instruction {
     Jmp(u16),
     /// Conditional jump
     J(Condition, u16),
-    /// Unconditional subroutine call
+    /// Unconditional subroutine call, pushing PC+3 to stack
     Call(u16),
-    /// Conditional subroutine call
+    /// Conditional subroutine call, pushing PC+3 to stack
     C(Condition, u16),
-    /// Unconditional return from subroutine
+    /// Unconditional return from subroutine, Pops PC from stack
     Ret,
-    /// Conditional return from subroutine
+    /// Conditional return from subroutine, Pops PC from stack
     R(Condition),
-    /// Restart
+    /// Calls location in memory specified in the u8 parameter
     Rst(u8),
-    /// Jump to address in H:L
+    /// Copies value from HL to PC
     Pchl,
-    /// Push register pair on the stack
+    /// Push register pair on the stack, pushing A/B/D/H first. When SP is pushed, the CPU pushes
+    /// PSW(A + flags) instead
     Push(RegPair),
-    /// Pop register pair from the stack
+    /// Pop register pair from the stack, popping flags/C/E/L first. When SP is pushed, the CPU
+    /// pops PSW(A + flags) instead
     Pop(RegPair),
     /// Swap H:L with top word on stack
     Xthl,
-    /// Set SP to content of H:L
+    /// Copies value from HL to SP
     Sphl,
     /// Read input port into A
     In(u8),
@@ -228,6 +272,78 @@ pub enum Instruction {
     Nop,
 }
 
+/*fn hex(s: &str) -> IResult<&str, u32> {
+    map_res(
+        preceded(
+            tag("0x"),
+            rest,
+        ),
+        |num| u32::from_str_radix(num, 16)
+    )(s)
+}
+
+enum Operand {
+    Reg(Reg),
+    Rp(RegPair),
+    Byte(u8),
+    Word(u16),
+}
+
+fn reg(s: &str) -> nom::IResult<&str, AsmToken> {
+    map(
+        alt((
+            tag("a"), tag("b"), tag("c"), tag("d"), tag("e"),
+            tag("h"), tag("l"), tag("m"),
+        )),
+        |v| match v {
+            "a" => AsmToken::Reg(Reg::A),
+            "b" => AsmToken::Reg(Reg::B),
+            "c" => AsmToken::Reg(Reg::C),
+            "d" => AsmToken::Reg(Reg::D),
+            "e" => AsmToken::Reg(Reg::E),
+            "h" => AsmToken::Reg(Reg::H),
+            "l" => AsmToken::Reg(Reg::L),
+            "m" => AsmToken::Reg(Reg::M),
+            _ => unreachable(),
+        },
+    )(s)
+}
+
+fn rp(s: &str) -> nom::IResult<&str, AsmToken> {
+    map(
+        alt((
+            tag("bc"), tag("de"), tag("hl"), tag("sp"), tag("psw"),
+        )),
+        |v| match v {
+            "bc" => AsmToken::Rp(RegPair::Bc),
+            "de" => AsmToken::Rp(RegPair::De),
+            "hl" => AsmToken::Rp(RegPair::Hl),
+            "psw" | "sp" => AsmToken::Rp(Reg::Sp),
+            _ => unreachable(),
+        },
+    )(s)
+}
+
+fn cond(s: &str) -> nom::IResult<&str, AsmToken> {
+    map(
+        alt((
+            tag("nz"), tag("z"), tag("nc"), tag("c"),
+            tag("po"), tag("pe"), tag("p"), tag("m"),
+        )),
+        |v| match v {
+            "nz" => AsmToken::Cond(Condition::NonZero),
+            "z" => AsmToken::Cond(Condition::Zero),
+            "nc" => AsmToken::Cond(Condition::NoCarry),
+            "c" => AsmToken::Cond(Condition::Carry),
+            "po" => AsmToken::Cond(Condition::Odd),
+            "pe" => AsmToken::Cond(Condition::Even),
+            "p" => AsmToken::Cond(Condition::Plus),
+            "m" => AsmToken::Cond(Condition::Minus),
+            _ => unreachable(),
+        },
+    )(s)
+}*/
+
 impl Instruction {
     pub fn len(&self) -> usize {
         use Instruction::*;
@@ -240,6 +356,68 @@ impl Instruction {
             | Cpi(..) | In(..) | Out(..) => 2,
             Lxi(..) | Lda(..) | Sta(..) | Lhld(..) | Shld(..) | Jmp(..)
             | J(..) | Call(..) | C(..) => 3,
+        }
+    }
+    pub fn encode(self) -> Vec<u8> {
+        use Instruction::*;
+        match self {
+            Mov(dst, src)   => vec![0b01000000 | dst.to_dst_byte() | src.to_src_byte()],
+            Mvi(dst, op)    => vec![0b00000110 | dst.to_dst_byte(), op],
+            Lxi(rp, op)     => vec![0b00000001 | rp.to_byte(), l(op), b(op)],
+            J(cond, op)     => vec![0b11000010 | cond.to_byte(), l(op), b(op)],
+            C(cond, op)     => vec![0b11000100 | cond.to_byte(), l(op), b(op)],
+            R(cond)         => vec![0b11000000 | cond.to_byte()],
+            Jmp(op)     => vec![0b11000011, l(op), b(op)],
+            Call(op)    => vec![0b11001101, l(op), b(op)],
+            Rst(dst)    => vec![0b11000111 | dst << 3],
+            Lda(op)     => vec![0b00111010, l(op), b(op)],
+            Sta(op)     => vec![0b00110010, l(op), b(op)],
+            Ldax(rp)    => vec![0b00001010 | rp.to_byte()],
+            Stax(rp)    => vec![0b00000010 | rp.to_byte()],
+            Lhld(op)    => vec![0b00101010, l(op), b(op)],
+            Shld(op)    => vec![0b00100010, l(op), b(op)],
+            Add(src)    => vec![0b10000000 | src.to_src_byte()],
+            Adi(op)     => vec![0b11000110, op],
+            Adc(src)    => vec![0b10001000 | src.to_src_byte()],
+            Aci(op)     => vec![0b11001110, op],
+            Sub(src)    => vec![0b10010000 | src.to_src_byte()],
+            Sui(op)     => vec![0b11010110, op],
+            Sbb(src)    => vec![0b10011000 | src.to_src_byte()],
+            Sbi(op)     => vec![0b11011110, op],
+            Inr(dst)    => vec![0b00000100 | dst.to_dst_byte()],
+            Dcr(dst)    => vec![0b00000101 | dst.to_dst_byte()],
+            Inx(rp)     => vec![0b00000011 | rp.to_byte()],
+            Dcx(rp)     => vec![0b00001011 | rp.to_byte()],
+            Dad(rp)     => vec![0b00001001 | rp.to_byte()],
+            Ana(src)    => vec![0b10100000 | src.to_src_byte()],
+            Ani(op)     => vec![0b11100110, op],
+            Ora(src)    => vec![0b10110000 | src.to_src_byte()],
+            Ori(op)     => vec![0b11110110, op],
+            Xra(src)    => vec![0b10101000 | src.to_src_byte()],
+            Xri(op)     => vec![0b11101110, op],
+            Cmp(src)    => vec![0b10111000 | src.to_src_byte()],
+            Cpi(op)     => vec![0b11111110, op],
+            Push(rp)    => vec![0b11000101 | rp.to_byte()],
+            Pop(rp)     => vec![0b11000001 | rp.to_byte()],
+            In(op)      => vec![0b11011011, op],
+            Out(op)     => vec![0b11010011, op],
+            Hlt     => vec![0x76],
+            Xchg    => vec![0xeb],
+            Daa     => vec![0x27],
+            Rlc     => vec![0x07],
+            Rrc     => vec![0x0f],
+            Ral     => vec![0x17],
+            Rar     => vec![0x1f],
+            Cma     => vec![0x2f],
+            Cmc     => vec![0x3f],
+            Stc     => vec![0x37],
+            Ret     => vec![0xc9],
+            Pchl    => vec![0xe9],
+            Xthl    => vec![0xe3],
+            Sphl    => vec![0xf9],
+            Ei      => vec![0xfb],
+            Di      => vec![0xf3],
+            Nop     => vec![0x00],
         }
     }
     pub fn decode_from(bytes: &[u8]) -> Self {
@@ -301,11 +479,11 @@ impl Instruction {
             (0, 0, 1, 0, 1, 1, 1, 1) => Cma,
             (0, 0, 1, 1, 1, 1, 1, 1) => Cmc,
             (0, 0, 1, 1, 0, 1, 1, 1) => Stc,
-            (1, 1, 0, 0, 0, 0, 1, 1) => Jmp(op16),
+            (1, 1, 0, 0, _, 0, 1, 1) => Jmp(op16),
             (1, 1, _, _, _, 0, 1, 0) => J(cond, op16),
-            (1, 1, 0, 0, 1, 1, 0, 1) => Call(op16),
+            (1, 1, _, _, 1, 1, 0, 1) => Call(op16),
             (1, 1, _, _, _, 1, 0, 0) => C(cond, op16),
-            (1, 1, 0, 0, 1, 0, 0, 1) => Ret,
+            (1, 1, 0, _, 1, 0, 0, 1) => Ret,
             (1, 1, _, _, _, 0, 0, 0) => R(cond),
             (1, 1, _, _, _, 1, 1, 1) => Rst(dst as u8),
             (1, 1, 1, 0, 1, 0, 0, 1) => Pchl,
@@ -317,8 +495,24 @@ impl Instruction {
             (1, 1, 0, 1, 0, 0, 1, 1) => Out(op),
             (1, 1, 1, 1, 1, 0, 1, 1) => Ei,
             (1, 1, 1, 1, 0, 0, 1, 1) => Di,
-            (0, 0, 0, 0, 0, 0, 0, 0) => Nop,
-            _ => panic!("unknown opcode {:x}", bytes[0]),
+            (0, 0, _, _, _, 0, 0, 0) => Nop,
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn code_decode_ok() {
+        use super::Instruction;
+        for i in 0..=u8::MAX {
+            let instruction = Instruction::decode_from(&vec![i, 0, 0]);
+            let mut encoded = instruction.clone().encode();
+            encoded.push(0);
+            encoded.push(0);
+            let re_decoded = Instruction::decode_from(&encoded);
+            assert_eq!(instruction, re_decoded);
         }
     }
 }

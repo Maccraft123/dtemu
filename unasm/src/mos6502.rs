@@ -371,10 +371,10 @@ pub fn decode_u8(val: u8) -> DatalessInstruction {
 #[cfg(test)]
 mod tests {
     fn dis(bytes: &[u8]) -> String {
-        crate::disasm(bytes, None).to_string()
+        crate::mos6502::disasm(bytes, None).to_string()
     }
     fn dis_addr(bytes: &[u8], addr: u16) -> String {
-        crate::disasm(bytes, Some(addr)).to_string()
+        crate::mos6502::disasm(bytes, Some(addr)).to_string()
     }
     #[test]
     fn lda() {

@@ -2,6 +2,9 @@
 resolver = "2"
 members = [
 	"unasm",
+	"doasm",
 	"dtemu",
 	"dt-bindings",
+	"yarer",
+	"unasm-derive",
 ]

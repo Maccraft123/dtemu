@@ -5,6 +5,7 @@ use fdt::node::FdtNode;
 
 pub mod mc6821;
 pub mod memory;
+pub mod pvconsole;
 
 pub mod prelude {
     pub use crate::MemoryWrapper;
@@ -70,6 +71,7 @@ pub fn probe(node: &FdtNode<'_, '_>) -> Option<Box<dyn Mmio>> {
             "memory" => Some(memory::Memory::new(node)),
             "motorola,mc6821" => Some(mc6821::Mc6821::new(node)),
             "generic-rom" => Some(memory::Rom::new(node)),
+            "dtemu,pv-console" => Some(pvconsole::PvConsole::new(node)),
             _ => None,
         };
         if dev.is_some() {

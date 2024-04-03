@@ -7,7 +7,7 @@ default: all
 dtbs: apple1.dtb \
 	pet2001.dtb \
 	nes.dtb \
-	tmp.dtb
+	generic-cpm.dtb
 
 all: dtbs
 

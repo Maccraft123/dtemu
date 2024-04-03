@@ -1,0 +1,47 @@
+/dts-v1/;
+
+/ {
+	compatible = "intel,8080";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "intel,8080";
+			reg = <0>;
+			//dtemu,override-reset-vector = <0xff00>;
+		};
+	};
+
+
+	memory@0 {
+		compatible = "memory";
+		reg = <0x0 0xdc00>;
+	};
+
+	rom@dc00 {
+		compatible = "generic-rom";
+		rom,name = "cpm-ccp";
+		reg = <0xdc00 0x800>;
+	};
+
+	rom@e400 {
+		compatible = "generic-rom";
+		rom,name = "cpm-bdos";
+		reg = <0xe400 0xe00>;
+	};
+
+	rom@f200 {
+		compatible = "generic-rom";
+		rom,name = "bios.rom";
+		reg = <0xf200 0xdf0>;
+	};
+
+	console@fff0 {
+		compatible = "dtemu,pv-console";
+		reg = <0xfff0 0x10>;
+	};
+};

@@ -27,6 +27,13 @@ struct ProgramStatusWord {
     carry: bool,
 }
 
+impl ProgramStatusWord {
+    fn as_stack(&self) -> u8 {
+        const MASK: u8 = 0xd5;
+        (self.into_bits() & MASK) | 0x2
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Intel8080State {
     a: u8,
@@ -76,7 +83,7 @@ impl<'me> Cpu<'me> for Intel8080 {
         Box::pin(async { self.state.lock().run(stuff).await })
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
-        &{|bytes, _| format!("{:?}", unasm::i8080::Instruction::decode_from(bytes))}
+        &{|bytes, _| format!("{:x?}", unasm::i8080::Instruction::decode_from(bytes))}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
@@ -97,6 +104,7 @@ enum LogicalOp {
     Xor,
     Or,
     And,
+    //Ana, // ANA affects AC, ANI doesn't
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -114,7 +122,7 @@ impl Intel8080State {
         };
         self.update_zsp(ret);
         if op == LogicalOp::And {
-            self.psw.set_aux_carry(((val1 | val2) & 0b1000) != 0);
+            self.psw.set_aux_carry(((val1 | val2) & 0x08) != 0);
         } else {
             self.psw.set_aux_carry(false);
         }
@@ -123,23 +131,29 @@ impl Intel8080State {
         ret
     }
 
-    fn arith_op(&mut self, op: ArithOp, val1: u8, mut val2: u8) -> u8 {
+    fn arith_op(&mut self, op: ArithOp, val1: u8, val2: u8) -> u8 {
         let ret = match op {
             ArithOp::Add(use_carry) => {
-                let carry = use_carry as u8 & self.psw.carry() as u8;
-                let val = val1 as u16 + val2 as u16 + carry as u16;
-                self.psw.set_carry(val & 0xff00 != 0);
+                let carry = (use_carry & self.psw.carry()) as u8;
+                let result = val1
+                    .wrapping_add(val2)
+                    .wrapping_add(carry);
+                //let result = val1 as u16 + val2 as u16 + carry as u16;
+                self.psw.set_carry(val1 as u16 + val2 as u16 + carry as u16 > 0xff);
                 self.psw.set_aux_carry(((val1 & 0x0f) + (val2 & 0x0f) + carry) > 0xf);
-                (val & 0xff) as u8
+                result
             },
             ArithOp::Sub(use_carry) => {
-                let carry = use_carry as u8 & self.psw.carry() as u8;
-                val2 += carry;
-                
-                let val = val1.wrapping_sub(val2);
-                self.psw.set_carry(val2 > val1);
-                self.psw.set_aux_carry((val2 & 0x0f) <= (val1 & 0x0f));
-                (val & 0xff) as u8
+                let carry = (use_carry & self.psw.carry()) as u8;
+                //let result = (val1 as u16).wrapping_sub(val2.wrapping_add(carry) as u16);
+                //self.psw.set_carry(result & 0xff00 != 0);
+                //self.psw.set_aux_carry((val2 & 0x0f) <= (val1 & 0x0f));
+                let result = val1
+                    .wrapping_sub(val2)
+                    .wrapping_sub(carry);
+                self.psw.set_aux_carry(val1 as i8 & 0xf - val2 as i8 & 0xf - carry as i8 >= 0);
+                self.psw.set_carry(val1 < val2 + carry);
+                result
             },
         };
         self.update_zsp(ret);
@@ -233,8 +247,8 @@ impl Intel8080State {
 
     async fn pop_rp(&mut self, mem: &MemoryWrapper, rp: RegPair) {
         if rp == RegPair::Sp {
-            self.a = self.pop8(mem).await;
             self.psw = self.pop8(mem).await.into();
+            self.a = self.pop8(mem).await;
         } else {
             let val = self.pop16(mem).await;
             self.set_regpair(mem, rp, val);
@@ -243,8 +257,8 @@ impl Intel8080State {
 
     async fn push_rp(&mut self, mem: &MemoryWrapper, rp: RegPair) {
         if rp == RegPair::Sp {
-            self.push8(mem, self.psw.into_bits()).await;
             self.push8(mem, self.a).await;
+            self.push8(mem, self.psw.as_stack()).await;
         } else {
             self.push16(mem, self.regpair(mem, rp)).await;
         }
@@ -286,10 +300,11 @@ impl Intel8080State {
 
             use std::io::Write;
             //println!("AF: {:02x}{:02x}, BC: {:04x}, DE: {:04x}, HL: {:04x}, SP: {:04x}\r",
-            //    self.a, self.psw.into_bits(), self.regpair(&mem, RegPair::Bc), self.regpair(&mem, RegPair::De),
+            //    self.a, self.psw.as_stack(), self.regpair(&mem, RegPair::Bc), self.regpair(&mem, RegPair::De),
             //    self.regpair(&mem, RegPair::Hl), self.sp);
             //println!("about to run {:04x}={:x?}\r", pc, inst);
             //if pc == 0x352 { return }
+            inst_done.store(false, Ordering::SeqCst);
             match inst {
                 Jmp(addr) => jump = Some(addr),
                 Call(addr) => {
@@ -378,20 +393,23 @@ impl Intel8080State {
                 Ret => jump = Some(self.pop16(&mem).await),
                 Stc => self.psw.set_carry(true),
                 Cmc => self.psw.set_carry(!self.psw.carry()),
-                Cma => self.a = !self.a,
+                Cma => self.a = self.a ^ 0xff,
                 Daa => {
-                    // stolen straight from https://github.com/GunshipPenguin/lib8080/blob/master/src/i8080.c#L405
-                    let mut add = 0x00;
-                    if self.a & 0x0f > 0x09 || self.psw.aux_carry() {
-                        add |= 0x06;
-                        self.psw.set_aux_carry(false);
+                    // HEAVILY inspired by https://github.com/GunshipPenguin/lib8080/blob/master/src/i8080.c#L405
+                    let mut add = 0;
+
+                    if self.psw.aux_carry() || self.a & 0x0f > 9 {
+                        add = 0x06
                     }
-                    if self.a & 0xf0 > 0x90 || (self.a & 0xf0 >= 0x90 && self.a & 0x0f > 9) || self.psw.carry() {
+
+                    if self.psw.carry() || (self.a & 0xf0) > 0x90
+                        || ((self.a & 0xf0) >= 0x90 && self.a & 0x0F > 9)
+                    {
                         add |= 0x60;
                         self.psw.set_carry(true);
                     }
-                    self.a += add;
-                    self.update_zsp(self.a);
+                    self.psw.set_aux_carry((self.a as u8 & 0x0F) + (add as u8 & 0x0F) > 0x0F);
+                    self.a = self.update_zsp(self.a.wrapping_add(add));
                 },
                 R(cond) => {
                     if self.has_cond(cond) {
@@ -401,24 +419,22 @@ impl Intel8080State {
                 Dcr(reg) => {
                     self.set_reg(&mem, reg, self.reg(&mem, reg).wrapping_sub(1));
                     self.update_zsp(self.reg(&mem, reg));
-                    self.psw.set_aux_carry(!((self.a & 0xf) == 0xf)); // whaaaa
+                    self.psw.set_aux_carry(!((self.reg(&mem, reg) & 0xf) == 0xf)); // whaaaa
                 },
                 Inr(reg) => {
-                    self.psw.set_aux_carry(self.a & 0xf == 0xf);
                     self.set_reg(&mem, reg, self.reg(&mem, reg).wrapping_add(1));
+                    self.psw.set_aux_carry(self.reg(&mem, reg) & 0xf == 0x00);
                     self.update_zsp(self.reg(&mem, reg));
                 },
                 Inx(rp) => self.set_regpair(&mem, rp, self.regpair(&mem, rp).wrapping_add(1)),
                 Dcx(rp) => self.set_regpair(&mem, rp, self.regpair(&mem, rp).wrapping_sub(1)),
                 Rrc => {
-                    let carry = self.a & 0x1 != 0;
-                    self.a = (self.a >> 1) | (carry as u8 * 0x80);
-                    self.psw.set_carry(carry);
+                    self.a = self.a.rotate_right(1);
+                    self.psw.set_carry(self.a & 0x80 != 0);
                 },
                 Rlc => {
-                    let carry = self.a & 0x80 != 0;
-                    self.a = (self.a << 1) | (carry as u8 * 0x01);
-                    self.psw.set_carry(carry);
+                    self.a = self.a.rotate_left(1);
+                    self.psw.set_carry(self.a & 0x01 != 0);
                 },
                 Rar => {
                     let carry = self.a & 0x1 != 0;
@@ -427,7 +443,7 @@ impl Intel8080State {
                 },
                 Ral => {
                     let carry = self.a & 0x80 != 0;
-                    self.a = (self.a << 1) | (self.psw.carry() as u8 * 0x01);
+                    self.a = (self.a << 1) | (self.psw.carry() as u8);
                     self.psw.set_carry(carry);
                 },
                 C(cond, addr) => {
@@ -446,6 +462,10 @@ impl Intel8080State {
                 Ei => (),
                 other => unimplemented!("8080 instruction {:x?}\r\n{:#x?}", other, self),
             }
+            inst_done.store(true, Ordering::SeqCst);
+            other_state.lock().clone_from(self);
+            pending!();
+            pending!();
             if let Some(0) = jump { return; }
             self.pc = jump.unwrap_or(self.pc + inst.len() as u16);
         }

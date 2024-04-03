@@ -60,35 +60,45 @@ impl MemoryWrapper {
 #[derive(Debug)]
 struct MemoryMap {
     segments: Vec<Segment>,
+    lut: [Option<(u8, u16)>; 65536],
 }
 
 impl MemoryMap {
     fn new() -> Self {
-        Self { segments: Vec::new() }
+        Self {
+            segments: Vec::new(),
+            lut: [None; 65536],
+        }
     }
     fn insert_mmio_device(&mut self, device: Box<dyn Mmio>, start: u32, size: u32, mirror_size: u32) {
         self.segments.push(Segment{device, start, size, mirror_size})
     }
     fn read8(&mut self, addr: u32) -> u8 {
-        for seg in self.segments.iter_mut() {
-            if addr >= seg.start && addr < (seg.start + seg.size) {
-                return seg.device.read8((addr - seg.start) % seg.mirror_size);
-                //data = Some(seg.device.read8((addr - seg.start)));
+        if let Some((idx, addr)) = self.lut[addr as usize] {
+            return self.segments.get_mut(idx as usize).unwrap().device.read8(addr as u32);
+        } else {
+            for (i, seg) in self.segments.iter_mut().enumerate() {
+                if addr >= seg.start && addr < (seg.start + seg.size) {
+                    self.lut[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
+                    return seg.device.read8((addr - seg.start) % seg.mirror_size);
+                    //data = Some(seg.device.read8((addr - seg.start)));
+                }
             }
         }
         0
     }
     fn write8(&mut self, addr: u32, val: u8) {
-        let mut written = false;
-        for seg in self.segments.iter_mut() {
-            if addr >= seg.start && addr < (seg.start + seg.size) {
-                seg.device.write8((addr - seg.start) % seg.mirror_size, val);
-                written = true;
+        if let Some((idx, addr)) = self.lut[addr as usize] {
+            return self.segments.get_mut(idx as usize).unwrap().device.write8(addr as u32, val);
+        } else {
+            for (i, seg) in self.segments.iter_mut().enumerate() {
+                if addr >= seg.start && addr < (seg.start + seg.size) {
+                    self.lut[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
+                    return seg.device.write8((addr - seg.start) % seg.mirror_size, val);
+                    //data = Some(seg.device.read8((addr - seg.start)));
+                }
             }
         }
-        //if !written {
-        //    eprintln!("Invalid memory write: {:x} = {:x}\r", addr, val);
-        //}
     }
 }
 

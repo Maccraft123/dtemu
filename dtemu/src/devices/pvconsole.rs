@@ -72,7 +72,7 @@ impl Mmio for PvConsole {
             _ => unreachable!(),
         }
     }
-    fn write8(&mut self, addr: u32, mut val: u8) {
+    fn write8(&mut self, addr: u32, val: u8) {
         match addr % 0x10 {
             // keyboard input char
             0 => (),

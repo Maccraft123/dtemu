@@ -1,5 +1,3 @@
-use crate::MemoryWrapper;
-
 use std::sync::mpsc;
 use fdt::node::FdtNode;
 
@@ -31,7 +29,7 @@ pub trait Device: core::fmt::Debug + Send {
 pub trait Mmio: Device {
     fn read8(&mut self, addr: u32) -> u8;
     fn write8(&mut self, addr: u32, val: u8);
-    fn tick(&mut self, _: MemoryWrapper) {}
+    fn tick(&mut self, _: crate::MemoryWrapper) {}
     fn firmware_name(&mut self) -> Option<&str> { None }
     fn load_firmware(&mut self, _fw: &[u8]) {}
 }

@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use super::{Operand};
+use super::{Operand, ParsableInstruction, EncodableInstruction};
 use core::mem;
 
 // MSB first
@@ -146,14 +146,14 @@ impl Condition {
 }
 
 /// A form of a decoded 8080/8085 instruction that's easy to work with in Rust.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, ParsableInstruction)]
 pub enum Instruction {
     /// Move register to register
-    Mov(Reg, Reg),
+    Mov(Reg, #[instruction(comma)] Reg),
     /// Move immediate value to register
-    Mvi(Reg, u8),
+    Mvi(Reg, #[instruction(comma)] u8),
     /// Load register pair with immediate value
-    Lxi(RegPair, u16),
+    Lxi(RegPair, #[instruction(comma)] u16),
     /// Load A from memory
     Lda(u16),
     /// Store A to memory
@@ -235,15 +235,15 @@ pub enum Instruction {
     /// Unconditional jump
     Jmp(u16),
     /// Conditional jump
-    J(Condition, u16),
+    J(#[instruction(nospace)] Condition, u16),
     /// Unconditional subroutine call, pushing PC+3 to stack
     Call(u16),
     /// Conditional subroutine call, pushing PC+3 to stack
-    C(Condition, u16),
+    C(#[instruction(nospace)] Condition, u16),
     /// Unconditional return from subroutine, Pops PC from stack
     Ret,
     /// Conditional return from subroutine, Pops PC from stack
-    R(Condition),
+    R(#[instruction(nospace)] Condition),
     /// Calls location in memory specified in the u8 parameter
     Rst(u8),
     /// Copies value from HL to PC
@@ -272,95 +272,10 @@ pub enum Instruction {
     Nop,
 }
 
-/*fn hex(s: &str) -> IResult<&str, u32> {
-    map_res(
-        preceded(
-            tag("0x"),
-            rest,
-        ),
-        |num| u32::from_str_radix(num, 16)
-    )(s)
-}
-
-enum Operand {
-    Reg(Reg),
-    Rp(RegPair),
-    Byte(u8),
-    Word(u16),
-}
-
-fn reg(s: &str) -> nom::IResult<&str, AsmToken> {
-    map(
-        alt((
-            tag("a"), tag("b"), tag("c"), tag("d"), tag("e"),
-            tag("h"), tag("l"), tag("m"),
-        )),
-        |v| match v {
-            "a" => AsmToken::Reg(Reg::A),
-            "b" => AsmToken::Reg(Reg::B),
-            "c" => AsmToken::Reg(Reg::C),
-            "d" => AsmToken::Reg(Reg::D),
-            "e" => AsmToken::Reg(Reg::E),
-            "h" => AsmToken::Reg(Reg::H),
-            "l" => AsmToken::Reg(Reg::L),
-            "m" => AsmToken::Reg(Reg::M),
-            _ => unreachable(),
-        },
-    )(s)
-}
-
-fn rp(s: &str) -> nom::IResult<&str, AsmToken> {
-    map(
-        alt((
-            tag("bc"), tag("de"), tag("hl"), tag("sp"), tag("psw"),
-        )),
-        |v| match v {
-            "bc" => AsmToken::Rp(RegPair::Bc),
-            "de" => AsmToken::Rp(RegPair::De),
-            "hl" => AsmToken::Rp(RegPair::Hl),
-            "psw" | "sp" => AsmToken::Rp(Reg::Sp),
-            _ => unreachable(),
-        },
-    )(s)
-}
-
-fn cond(s: &str) -> nom::IResult<&str, AsmToken> {
-    map(
-        alt((
-            tag("nz"), tag("z"), tag("nc"), tag("c"),
-            tag("po"), tag("pe"), tag("p"), tag("m"),
-        )),
-        |v| match v {
-            "nz" => AsmToken::Cond(Condition::NonZero),
-            "z" => AsmToken::Cond(Condition::Zero),
-            "nc" => AsmToken::Cond(Condition::NoCarry),
-            "c" => AsmToken::Cond(Condition::Carry),
-            "po" => AsmToken::Cond(Condition::Odd),
-            "pe" => AsmToken::Cond(Condition::Even),
-            "p" => AsmToken::Cond(Condition::Plus),
-            "m" => AsmToken::Cond(Condition::Minus),
-            _ => unreachable(),
-        },
-    )(s)
-}*/
-
-impl Instruction {
-    pub fn len(&self) -> usize {
+impl EncodableInstruction for Instruction {
+    fn encode(&self) -> Vec<u8> {
         use Instruction::*;
-        match self {
-            Hlt | Mov(..) | Xchg | Add(..) | Adc(..) | Sub(..) | Sbb(..) | Inr(..) | Dcr(..)
-            | Inx(..) | Dcx(..) | Dad(..) | Daa | Ana(..) | Ora(..) | Xra(..) | Cmp(..) | Rlc
-            | Rrc | Ral | Rar | Cma | Cmc | Stc | Ret | R(..) | Rst(..) | Pchl | Push(..)
-            | Pop(..) | Xthl | Sphl | Ei | Di | Nop | Ldax(..) | Stax(..) => 1,
-            Mvi(..) | Adi(..) | Aci(..) | Sui(..) | Sbi(..) | Ani(..) | Ori(..) | Xri(..)
-            | Cpi(..) | In(..) | Out(..) => 2,
-            Lxi(..) | Lda(..) | Sta(..) | Lhld(..) | Shld(..) | Jmp(..)
-            | J(..) | Call(..) | C(..) => 3,
-        }
-    }
-    pub fn encode(self) -> Vec<u8> {
-        use Instruction::*;
-        match self {
+        match *self {
             Mov(dst, src)   => vec![0b01000000 | dst.to_dst_byte() | src.to_src_byte()],
             Mvi(dst, op)    => vec![0b00000110 | dst.to_dst_byte(), op],
             Lxi(rp, op)     => vec![0b00000001 | rp.to_byte(), l(op), b(op)],
@@ -369,7 +284,7 @@ impl Instruction {
             R(cond)         => vec![0b11000000 | cond.to_byte()],
             Jmp(op)     => vec![0b11000011, l(op), b(op)],
             Call(op)    => vec![0b11001101, l(op), b(op)],
-            Rst(dst)    => vec![0b11000111 | dst << 3],
+            Rst(dst)    => vec![0b11000111 | (dst << 3) & 0b111],
             Lda(op)     => vec![0b00111010, l(op), b(op)],
             Sta(op)     => vec![0b00110010, l(op), b(op)],
             Ldax(rp)    => vec![0b00001010 | rp.to_byte()],
@@ -418,6 +333,22 @@ impl Instruction {
             Ei      => vec![0xfb],
             Di      => vec![0xf3],
             Nop     => vec![0x00],
+        }
+    }
+}
+
+impl Instruction {
+    pub fn len(&self) -> usize {
+        use Instruction::*;
+        match self {
+            Hlt | Mov(..) | Xchg | Add(..) | Adc(..) | Sub(..) | Sbb(..) | Inr(..) | Dcr(..)
+            | Inx(..) | Dcx(..) | Dad(..) | Daa | Ana(..) | Ora(..) | Xra(..) | Cmp(..) | Rlc
+            | Rrc | Ral | Rar | Cma | Cmc | Stc | Ret | R(..) | Rst(..) | Pchl | Push(..)
+            | Pop(..) | Xthl | Sphl | Ei | Di | Nop | Ldax(..) | Stax(..) => 1,
+            Mvi(..) | Adi(..) | Aci(..) | Sui(..) | Sbi(..) | Ani(..) | Ori(..) | Xri(..)
+            | Cpi(..) | In(..) | Out(..) => 2,
+            Lxi(..) | Lda(..) | Sta(..) | Lhld(..) | Shld(..) | Jmp(..)
+            | J(..) | Call(..) | C(..) => 3,
         }
     }
     pub fn decode_from(bytes: &[u8]) -> Self {

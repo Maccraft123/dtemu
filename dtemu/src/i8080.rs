@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
     
-use unasm::i8080::{self, Instruction, Condition, Reg, RegPair};
+use unasm::i8080::{Instruction, Condition, Reg, RegPair};
 use crate::cpu::{Cpu, CpuRegs, DisasmFn};
 
 struct Intel8080Stuff<'a> {
@@ -289,7 +289,7 @@ impl Intel8080State {
             mut mem,
             cached_state: other_state,
             instruction_done: inst_done,
-            trace_tx,
+            trace_tx: _trace_tx,
         } = stuff;
         loop {
             let mut jump: Option<u16> = None;

@@ -188,62 +188,120 @@ impl Operand for Mos6502Operand {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ParsableOpcode)]
 pub enum Opcode {
+    /// Load A
     Lda,
+    /// Load X
     Ldx,
+    /// Load Y
     Ldy,
+    /// Store A
     Sta,
+    /// Store X
     Stx,
+    /// Store Y
     Sty,
+    /// Copy A to X
     Tax,
+    /// Copy A to Y
     Tay,
+    /// Copy X to SP
     Txs,
+    /// Copy X to A
     Txa,
+    /// Copy Y to A
     Tya,
+    /// Decrement Y
     Dey,
+    /// Branch on carry clear
     Bcc,
+    /// Jmp
     Jmp,
+    /// Software interrupt
     Brk,
+    /// Push Accumulator on stack
     Pha,
+    /// Pull Accumulator from stack
     Pla,
+    /// Jump to subroutine
     Jsr,
+    /// Clear decimal flag
     Cld,
+    /// Set interrupt disable
     Sei,
+    /// Return from interrupt handler
     Rti,
+    /// Arithmetic shift left
     Asl,
+    /// Logical shift left
     Lsr,
+    /// Bit compare with memory, AND-ing A with operand. 7th bit of result goes into Negative
+    /// flag, 6th bit of result goes into Overflow flag, Zero gets set if result is 0x00
     Bit,
+    /// Branch on zero flag not set
     Bne,
+    /// Branch on zero flag set
     Beq,
+    /// Increment X
     Inx,
+    /// Operand OR Accumulator
     Ora,
+    /// Operand AND Accumulator
     And,
+    /// Operand XOR Accumulator
     Eor,
+    /// Add with carry
     Adc,
+    /// Compare(subtract without storing the result) Operand with accumulator
     Cmp,
+    /// Subtract with carry, equal to adding negated operand to A
     Sbc,
+    /// Return from subroutine
     Rts,
+    /// Branch on overflow flag set
     Bvs,
+    /// Branch on overflow flag not set
     Bvc,
+    /// Branch on sign flag not set
     Bpl,
+    /// Branch on sign flag set
     Bmi,
+    /// Branch on carry flag not set
     Bcs,
+    /// Set decimal flag
     Sed,
+    /// Set carry flag
     Sec,
+    /// Clear overflow flag
     Clv,
+    /// Clear interrupt-disable flag
     Cli,
+    /// Clear carry flag
     Clc,
+    /// Increment Y
     Iny,
+    /// Decrement X
     Dex,
+    /// Copy SP to X
     Tsx,
+    /// Do nothing
     Nop,
+    /// Rotate left
     Rol,
+    /// Rotate right
     Ror,
+    /// Compare(like CMP) X
     Cpx,
+    /// Compare(like CMP) Y
     Cpy,
+    /// Pull flags from stack
     Plp,
+    /// Push flgas to stack
     Php,
+    /// Decrement operand
     Dec,
+    /// Increment operand
     Inc,
+    /// Undocumented, Freeze the CPU
     Jam,
 }
 

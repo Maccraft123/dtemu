@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use unasm::mos6502::Addressing;
+use unasm::mos6502::{DatalessInstruction, Addressing};
 use crate::cpu::{Cpu, CpuRegs, DisasmFn};
 
 #[bitfield(u8, order = Msb)]
@@ -83,7 +83,8 @@ impl<'me> Cpu<'me> for Mos6502 {
         Box::pin(async { self.state.lock().run(stuff).await })
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
-        &{|bytes, addr| unasm::mos6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
+        //&{|bytes, addr| unasm::mos6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
+        &{|_, _| todo!()}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
@@ -130,8 +131,8 @@ impl Mos6502State {
             let mut jumpto = None;
             use unasm::mos6502::Opcode;
             
-
-            let inst = unasm::mos6502::decode_u8(memory.fetch8(self.pc as u32).await);
+            let inst = DatalessInstruction::from_u8(memory.fetch8(self.pc as u32).await).unwrap();
+            //let inst = unasm::mos6502::decode_u8(memory.fetch8(self.pc as u32).await);
             inst_done.store(false, Ordering::SeqCst);
 
             match inst.opcode() {
@@ -299,6 +300,7 @@ impl Mos6502State {
                     self.flags.set_zero((val & self.a) == 0);
                 },
                 Opcode::Nop => pending!(),
+                Opcode::Jam => panic!("CPU Jammed"),
             }
 
             inst_done.store(true, Ordering::SeqCst);

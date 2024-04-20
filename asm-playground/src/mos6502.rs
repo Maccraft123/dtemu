@@ -615,6 +615,15 @@ impl FixupInstruction for Instruction {
 }
 
 impl EncodableInstruction for Instruction {
+    fn len(&self) -> usize {
+        use Addressing::*;
+        match self.1.addressing() {
+            Implied | Accumulator => 1,
+            Immediate | ZeroPage | ZeroPageX | ZeroPageY | Relative => 2,
+            Absolute | AbsoluteX | AbsoluteY |
+                Indirect | IndirectX | IndirectY => 3,
+        }
+    }
     fn encode(&self) -> Vec<u8> {
         let mut ret = Vec::with_capacity(3);
         println!("{:x?}", self);

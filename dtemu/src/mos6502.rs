@@ -5,7 +5,7 @@ use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use unasm::mos6502::{DatalessInstruction, Addressing};
+use asm_playground::mos6502::{DatalessInstruction, Addressing};
 use crate::cpu::{Cpu, CpuRegs, DisasmFn};
 
 #[bitfield(u8, order = Msb)]
@@ -84,7 +84,7 @@ impl<'me> Cpu<'me> for Mos6502 {
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
         //&{|bytes, addr| unasm::mos6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
-        &{|bytes, _| format!("{:x?}", unasm::mos6502::Instruction::decode_from(bytes))}
+        &{|bytes, _| format!("{:x?}", asm_playground::mos6502::Instruction::decode_from(bytes))}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
@@ -132,7 +132,7 @@ impl Mos6502State {
         loop {
             cycles += 1;
             let mut jumpto = None;
-            use unasm::mos6502::Opcode;
+            use asm_playground::mos6502::Opcode;
             
             let inst = DatalessInstruction::from_u8(memory.fetch8(self.pc as u32).await).unwrap();
             inst_done.store(false, Ordering::SeqCst);

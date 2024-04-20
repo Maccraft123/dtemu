@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use crossbeam_channel::Sender;
     
-use unasm::i8080::{Instruction, Condition, Reg, RegPair};
+use asm_playground::i8080::{Instruction, Condition, Reg, RegPair};
 use crate::cpu::{Cpu, CpuRegs, DisasmFn};
 
 struct Intel8080Stuff<'a> {
@@ -83,7 +83,7 @@ impl<'me> Cpu<'me> for Intel8080 {
         Box::pin(async { self.state.lock().run(stuff).await })
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
-        &{|bytes, _| format!("{:x?}", unasm::i8080::Instruction::decode_from(bytes))}
+        &{|bytes, _| format!("{:x?}", asm_playground::i8080::Instruction::decode_from(bytes))}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)

@@ -131,15 +131,20 @@ impl<T: ParsableInstruction + EncodableInstruction> ParsableEncodableInstruction
 
 use unasm_derive::ParsableInstruction;
 pub trait ParsableInstruction: core::fmt::Debug {
+    /// Returns the parser, first argument is the hashset of known labels
     fn parse(_: &HashSet<String>) -> impl FnMut(&str) -> nom::IResult<&str, (Self, OperandPatches)> where Self: Sized;
+    /// Sets value of an operand, used mainly for patching label addresses and expressions
     fn set_operand(&mut self, operand: usize, data: f64);
 }
 
 pub trait ValidateInstruction: ParsableInstruction {
+    /// Ensure that this instruction is correct, on 8080 instruction "mov m, m" is decoded as "hlt"
+    /// and should not be accepted
     fn validate(&self);
 }
 
 pub trait FixupInstruction: ParsableInstruction {
+    /// A hack to allow branching to labels for 6502
     fn fixup(&mut self, _: &OperandPatches);
 }
 
@@ -149,10 +154,16 @@ pub trait ParsableOpcode {
 }
 
 pub trait EncodableInstruction: core::fmt::Debug {
+    /// Encodes this instruction, returning a Vec with the binary form
     fn encode(&self) -> Vec<u8>;
+    /// Returns length of this instruction
+    fn len(&self) -> usize;
 }
 
 pub trait DecodableInstruction {
     type Error;
+    /// Decodes a string of bytes into an instruction
     fn decode(_: &[u8]) -> Result<Self, Self::Error> where Self: Sized;
+    /// Returns length of this instruction
+    fn len(&self) -> usize;
 }

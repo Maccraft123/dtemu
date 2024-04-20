@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
-use super::{Operand, ParsableInstruction, EncodableInstruction};
+use super::{Operand, ParsableInstruction, EncodableInstruction, DecodableInstruction};
+use core::convert::Infallible;
 use core::mem;
 
 // MSB first
@@ -273,6 +274,9 @@ pub enum Instruction {
 }
 
 impl EncodableInstruction for Instruction {
+    fn len(&self) -> usize {
+        self.len()
+    }
     fn encode(&self) -> Vec<u8> {
         use Instruction::*;
         match *self {
@@ -337,6 +341,16 @@ impl EncodableInstruction for Instruction {
     }
 }
 
+impl DecodableInstruction for Instruction {
+    type Error = Infallible;
+    fn decode(b: &[u8]) -> Result<Self, Self::Error>{
+        Ok(Instruction::decode_from(b))
+    }
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 impl Instruction {
     pub fn len(&self) -> usize {
         use Instruction::*;
@@ -352,9 +366,6 @@ impl Instruction {
         }
     }
     pub fn decode_from(bytes: &[u8]) -> Self {
-        // TODO: is this good? helps me not fuck up the pattern matching below
-        #![deny(unreachable_patterns)]
-
         use Instruction::*;
         let b = bytes[0].view_bits::<Msb0>();
         let bits = (

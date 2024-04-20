@@ -24,13 +24,13 @@ pub enum Patch {
 }
 
 impl Patch {
-    fn label(&self) -> Option<&str> {
+    /*fn label(&self) -> Option<&str> {
         match &self {
             Patch::LabelAbsolute(s) => Some(s),
             Patch::LabelRelative(s) => Some(s),
             Patch::ConstRelative(_) => None,
         }
-    }
+    }*/
     fn into_relative(self) -> Self {
         match self {
             Self::LabelAbsolute(s) => Self::LabelRelative(s),

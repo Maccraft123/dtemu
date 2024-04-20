@@ -1,0 +1,8 @@
+[package]
+name = "cartridge"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitfield-struct = "0.6.0"
+nom = "7.1.3"

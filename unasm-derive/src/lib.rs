@@ -298,7 +298,7 @@ pub fn instruction(input: TokenStream) -> TokenStream {
             if iter.next().is_some() {
                 unimplemented!("tuple structs with more than 2 fields");
             }
-            let ret = quote! {
+            quote! {
                 impl ParsableInstruction for #ty {
                     fn parse(labels: &::std::collections::HashSet<String>) -> impl FnMut(&str) -> ::nom::IResult<&str, (Self, crate::OperandPatches)> + '_ {
                         |s| {
@@ -326,9 +326,7 @@ pub fn instruction(input: TokenStream) -> TokenStream {
                         }
                     }
                 }
-            }.into();
-            eprintln!("{}", ret);
-            ret
+            }.into()
         },
     }
 }

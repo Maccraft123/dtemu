@@ -7,4 +7,6 @@ members = [
 	"dt-bindings",
 	"yarer",
 	"unasm-derive",
+	"cartridge",
+	"readcart",
 ]

@@ -50,6 +50,7 @@
 		clocks = <&ppu_clk>;
 		reg = <0x2000 0x2000>;
 		mirror-size = <0x8>;
+		nes-cartridge = <&cart>;
 	};
 
 	apu@4000 {
@@ -57,10 +58,8 @@
 		reg = <0x4000 0x20>;
 	};
 
-	// TODO: mappers
-	rom@4020 {
-		compatible = "generic-rom";
-		rom,name = "cartridge";
+	cart: rom@4020 {
+		compatible = "nintendo,nes-cartridge";
 		reg = <0x4020 0xbfe0>;
 	};
 };

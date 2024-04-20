@@ -1,7 +1,6 @@
 // i gotta clean those up later
 use futures::{pending, poll};
 use std::io::Write;
-use std::sync::mpsc;
 use std::path::PathBuf;
 use clap::Parser;
 use std::{io, thread, fs};
@@ -12,6 +11,7 @@ use std::collections::HashMap;
 use crossterm::event::{self, Event};
 use std::time::Duration;
 use fdt::Fdt;
+use crossbeam_channel::{unbounded, bounded, Receiver, Sender};
 
 mod devices;
 mod mos6502;
@@ -20,10 +20,10 @@ mod cpu;
 
 use cpu::{Cpu, CpuRegs};
 
-use devices::{Mmio};
+use devices::MmioDevice;
 
 pub struct MemoryWrapper {
-    ptr: Arc<Mutex<MemoryMap>>,
+    ptr: Arc<MemoryMap>,
 }
 
 impl Clone for MemoryWrapper {
@@ -32,22 +32,30 @@ impl Clone for MemoryWrapper {
 
 // FIXME: 6502 timings
 impl MemoryWrapper {
-    fn new(ptr: Arc<Mutex<MemoryMap>>) -> Self {
+    fn new(ptr: Arc<MemoryMap>) -> Self {
         Self { ptr }
     }
+    fn device_by_phandle(&self, goal: usize) -> Option<Arc<Mutex<dyn MmioDevice>>> {
+        self.ptr.segments.iter()
+            .find(|opt| opt.phandle.is_some_and(|v| v == goal))
+            .map(|seg| Arc::clone(&seg.device))
+    }
     fn set8_fast(&self, addr: u32, val: u8) {
-        self.ptr.lock().write8(addr, val)
+        self.ptr.write8(addr, val)
     }
     fn fetch8_fast(&self, addr: u32) -> u8 {
-        self.ptr.lock().read8(addr)
+        self.ptr.read8(addr)
     }
     async fn fetch8(&self, addr: u32) -> u8 {
         pending!();
-        self.ptr.lock().read8(addr)
+        if addr == 0x4016 {
+            panic!("joystick read woo");
+        }
+        self.ptr.read8(addr)
     }
     async fn set8(&self, addr: u32, val: u8) {
         pending!();
-        self.ptr.lock().write8(addr, val)
+        self.ptr.write8(addr, val)
     }
     async fn fetch16(&self, addr: u32) -> u16 {
         if addr & 0x000f == 0xf { // this correct? idk
@@ -57,63 +65,63 @@ impl MemoryWrapper {
     }
 }
 
-#[derive(Debug)]
 struct MemoryMap {
     segments: Vec<Segment>,
-    lut: [Option<(u8, u16)>; 65536],
+    lut: Mutex<[Option<(u8, u16)>; 65536]>,
 }
 
 impl MemoryMap {
     fn new() -> Self {
         Self {
             segments: Vec::new(),
-            lut: [None; 65536],
+            lut: Mutex::new([None; 65536]),
         }
     }
-    fn insert_mmio_device(&mut self, device: Box<dyn Mmio>, start: u32, size: u32, mirror_size: u32) {
-        self.segments.push(Segment{device, start, size, mirror_size})
+    fn insert_mmio_device(&mut self, device: Arc<Mutex<dyn MmioDevice>>, start: u32, size: u32, mirror_size: u32) {
+        let phandle = device.lock().phandle();
+        self.segments.push(Segment{phandle, device, start, size, mirror_size})
     }
-    fn read8(&mut self, addr: u32) -> u8 {
-        if let Some((idx, addr)) = self.lut[addr as usize] {
-            return self.segments.get_mut(idx as usize).unwrap().device.read8(addr as u32);
+    fn read8(&self, addr: u32) -> u8 {
+        if let Some((idx, addr)) = self.lut.lock()[addr as usize] {
+            return self.segments.get(idx as usize).unwrap().device.lock().read8(addr as u32);
         } else {
-            for (i, seg) in self.segments.iter_mut().enumerate() {
+            for (i, seg) in self.segments.iter().enumerate() {
                 if addr >= seg.start && addr < (seg.start + seg.size) {
-                    self.lut[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
-                    return seg.device.read8((addr - seg.start) % seg.mirror_size);
-                    //data = Some(seg.device.read8((addr - seg.start)));
+                    self.lut.lock()[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
+                    return seg.device.lock().read8((addr - seg.start) % seg.mirror_size);
                 }
             }
         }
         0
     }
-    fn write8(&mut self, addr: u32, val: u8) {
-        if let Some((idx, addr)) = self.lut[addr as usize] {
-            return self.segments.get_mut(idx as usize).unwrap().device.write8(addr as u32, val);
+    fn write8(&self, addr: u32, val: u8) {
+        if let Some((idx, addr)) = self.lut.lock()[addr as usize] {
+            return self.segments[idx as usize].device.lock().write8(addr as u32, val);
         } else {
-            for (i, seg) in self.segments.iter_mut().enumerate() {
+            for (i, seg) in self.segments.iter().enumerate() {
                 if addr >= seg.start && addr < (seg.start + seg.size) {
-                    self.lut[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
-                    return seg.device.write8((addr - seg.start) % seg.mirror_size, val);
-                    //data = Some(seg.device.read8((addr - seg.start)));
+                    self.lut.lock()[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
+                    return seg.device.lock().write8((addr - seg.start) % seg.mirror_size, val);
                 }
             }
         }
     }
 }
 
-#[derive(Debug)]
 struct Segment {
     start: u32,
     size: u32,
     mirror_size: u32,
-    device: Box<dyn Mmio>,
+    phandle: Option<usize>,
+    // lol
+    device: Arc<Mutex<dyn MmioDevice>>,
 }
 
 struct Machine {
+    start_frozen: bool,
     mem: MemoryWrapper,
-    console_in: Option<mpsc::Receiver<char>>,
-    console_out: Option<mpsc::Sender<Event>>,
+    console_in: Option<Receiver<char>>,
+    console_out: Option<Sender<Event>>,
     console_size: (u8, u8),
     cpu: Box<dyn for<'a> Cpu<'a>>,
 }
@@ -134,11 +142,13 @@ struct Args {
     cycles: Option<u64>,
     #[arg(long)]
     dump_cpu_state: bool,
+    #[arg(long)]
+    frozen: bool,
 }
 
 struct EmuTui {
-    console_recv: mpsc::Receiver<char>,
-    console_send: mpsc::Sender<Event>,
+    console_recv: Receiver<char>,
+    console_send: Sender<Event>,
     _console_size: (u8, u8),
 }
 
@@ -324,13 +334,13 @@ struct DebuggerInfo<'mach, 'cpu> {
     mem: MemoryWrapper,
     disasm_fn: &'static cpu::DisasmFn,
     run: &'mach AtomicBool,
-    cpu_dump: Option<mpsc::Receiver<String>>, // FIXME
+    cpu_dump: Option<Receiver<String>>, // FIXME
 }
 
 fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
     let mut cycles = 0;
     let run = AtomicBool::new(true);
-    let singlestep = AtomicBool::new(false);
+    let singlestep = AtomicBool::new(mach.start_frozen);
     let do_a_step = Mutex::new(false);
     let do_a_step_condvar = Condvar::new();
 
@@ -342,7 +352,7 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
 
     let cpu_dump;
     if do_dump_cpu {
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = unbounded();
         mach.cpu.trace_start(tx);
         cpu_dump = Some(rx);
     } else {
@@ -364,13 +374,33 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
         futures::executor::block_on( async {
             let mut cpu_fut = std::pin::pin!(mach.cpu.tick());
             s.spawn(|| tui.run(debugger_info));
+            let mem = mach.new_mem_wrapper();
 
             // Iterates once for every instruction
             'outer: loop {
+                if singlestep.load(Ordering::SeqCst) {
+                    let mut step = do_a_step.lock();
+                    if !*step {
+                        do_a_step_condvar.wait(&mut step);
+                    }
+                    *step = false;
+                }
                 // Iterates once for every clock cycle
                 'cycles: loop {
                     if poll!(&mut cpu_fut).is_ready() {
                         run.store(false, Ordering::SeqCst);
+                    }
+
+                    for d in mem.ptr.segments.iter() {
+                        d.device.lock().tick();
+                    }
+
+                    if singlestep.load(Ordering::SeqCst) {
+                        let mut step = do_a_step.lock();
+                        if !*step {
+                            do_a_step_condvar.wait(&mut step);
+                        }
+                        *step = false;
                     }
 
                     cycles += 1;
@@ -395,14 +425,6 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
                 //if cpu.regs().lock().next_instruction() == 0x1000 {
                 //    singlestep.store(true, Ordering::SeqCst);
                 //}
-
-                if singlestep.load(Ordering::SeqCst) {
-                    let mut step = do_a_step.lock();
-                    if !*step {
-                        do_a_step_condvar.wait(&mut step);
-                    }
-                    *step = false;
-                }
             }
             cycles -= 1;
         } );
@@ -445,15 +467,15 @@ fn main() {
         let dev = devices::probe(&node);
 
         if let Some(device) = dev {
-            mem.insert_mmio_device(device, start, size, mirror_size);
+            mem.insert_mmio_device(device /*as Arc<Mutex<Arc<dyn MmioDevice>>>*/, start, size, mirror_size);
         }
     }
 
     // wire up some devices
-    let (mut device_sender, emu_receiver) = Some(mpsc::channel()).unzip();
-    let (emu_sender, mut device_receiver) = Some(mpsc::channel()).unzip();
+    let (mut device_sender, emu_receiver) = Some(bounded(512)).unzip();
+    let (emu_sender, mut device_receiver) = Some(bounded(512)).unzip();
     let mut size = (0, 0);
-    for device in mem.segments.iter_mut().map(|s| &mut s.device) {
+    for mut device in mem.segments.iter().map(|s| s.device.lock()) {
         if let Some(name) = device.firmware_name() {
             if let Some(data) = firmwares.get(name) {
                 device.load_firmware(&data);
@@ -481,7 +503,7 @@ fn main() {
         }
     }
 
-    let mem = MemoryWrapper::new(Arc::new(Mutex::new(mem)));
+    let mem = MemoryWrapper::new(Arc::new(mem));
     let mut cpu: Option<Box<dyn for<'a> Cpu<'a>>> = None;
 
     if let Some(c) = devtree.cpus().next() {
@@ -502,6 +524,7 @@ fn main() {
     }
 
     let mach = Machine {
+        start_frozen: args.frozen,
         mem: mem.clone(),
         console_in: emu_receiver,
         console_out: emu_sender,
@@ -509,5 +532,8 @@ fn main() {
         cpu: cpu.unwrap(),
     };
 
+    for dev in mem.ptr.segments.iter() {
+        dev.device.lock().init(mach.new_mem_wrapper());
+    }
     run(mach, args.cycles, args.dump_cpu_state);
 }

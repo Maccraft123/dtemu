@@ -1,5 +1,5 @@
 use std::fmt;
-use std::sync::mpsc;
+use crossbeam_channel::Sender;
 use parking_lot::Mutex;
 use crate::MemoryWrapper;
 
@@ -17,7 +17,7 @@ pub trait Cpu<'me> {
     /// Function pointer to the function to turn bytes into a disassembled
     /// instruction
     fn disasm_fn(&self) -> &'static DisasmFn;
-    fn trace_start(&self, _: mpsc::Sender<String>);
+    fn trace_start(&self, _: Sender<String>);
     fn trace_end(&self);
 }
 

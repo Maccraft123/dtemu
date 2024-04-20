@@ -1,0 +1,8 @@
+[package]
+name = "readcart"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cartridge = { version = "0.1.0", path = "../cartridge" }
+clap = { version = "4.5.4", features = ["derive"] }

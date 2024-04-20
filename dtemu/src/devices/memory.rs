@@ -6,13 +6,26 @@ pub struct Rom {
     rom_name: String,
     allow_write: bool,
     name: String,
+    phandle: Option<usize>,
     //fw_offset: u32,
 }
 
 impl Device for Rom {
+    fn phandle(&self) -> Option<usize> { self.phandle }
+    fn firmware_name(&mut self) -> Option<&str> {
+        Some(&self.rom_name)
+    }
+    fn load_firmware(&mut self, fw: &[u8]) {
+        if fw.len() > self.data.len() {
+            panic!("file too big, my size: {:x}, file size: {:x}", self.data.len(), fw.len());
+        }
+        for (i, x) in fw.iter().enumerate() {
+             self.data[i] = *x;
+        }
+    }
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
     fn node_name(&self) -> &str { &self.name }
-    fn new(node: &FdtNode<'_, '_>) -> Box<Self> {
+    fn new(node: &FdtNode<'_, '_>) -> Arc<Mutex<Self>> {
         let len = node.reg()
             .expect("reg has to be supplied with a memory device")
             .next().unwrap()
@@ -29,14 +42,15 @@ impl Device for Rom {
             //.and_then(|p| p.as_usize())
             //.unwrap_or(0) as u32;
 
-        Box::new(Self {
+        Arc::new(Mutex::new(Self {
                 data: vec![0; len],
                 rom_name,
                 allow_write: write,
                 name,
+                phandle: node.property("phandle").map(|p| p.as_usize()).flatten(),
                 //fw_offset,
             }
-        )
+        ))
     }    
 }
 
@@ -47,17 +61,6 @@ impl Mmio for Rom {
             self.data[addr as usize] = val
         } else {
             eprintln!("Invalid write to ROM")
-        }
-    }
-    fn firmware_name(&mut self) -> Option<&str> {
-        Some(&self.rom_name)
-    }
-    fn load_firmware(&mut self, fw: &[u8]) {
-        if fw.len() > self.data.len() {
-            panic!("file too big, my size: {:x}, file size: {:x}", self.data.len(), fw.len());
-        }
-        for (i, x) in fw.iter().enumerate() {
-             self.data[i] = *x;
         }
     }
 }
@@ -71,13 +74,14 @@ pub struct Memory {
 impl Device for Memory {
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
     fn node_name(&self) -> &str { &self.name }
-    fn new(node: &FdtNode<'_, '_>) -> Box<Self> {
+    fn phandle(&self) -> Option<usize> { None } // no
+    fn new(node: &FdtNode<'_, '_>) -> Arc<Mutex<Self>> {
         let len = node.reg()
             .expect("reg has to be supplied with a memory device")
             .next().unwrap()
             .size.unwrap();
         let name = node.name.to_string();
-        Box::new(Self { data: vec![0; len], name } )
+        Arc::new(Mutex::new(Self { data: vec![0; len], name } ))
     }
 }
 

@@ -2,8 +2,8 @@ use bitfield_struct::bitfield;
 use futures::pending;
 use crate::MemoryWrapper;
 use parking_lot::Mutex;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use crossbeam_channel::Sender;
     
 use unasm::i8080::{Instruction, Condition, Reg, RegPair};
 use crate::cpu::{Cpu, CpuRegs, DisasmFn};
@@ -12,7 +12,7 @@ struct Intel8080Stuff<'a> {
     mem: MemoryWrapper,
     cached_state: &'a Mutex<Intel8080State>,
     instruction_done: &'a AtomicBool,
-    trace_tx: &'a Mutex<Option<mpsc::Sender<String>>>
+    trace_tx: &'a Mutex<Option<Sender<String>>>
 }
 
 #[bitfield(u8, order = Msb)]
@@ -60,7 +60,7 @@ pub struct Intel8080 {
     cached_state: Mutex<Intel8080State>,
     instruction_done: AtomicBool,
     mem: MemoryWrapper,
-    tx: Mutex<Option<mpsc::Sender<String>>>,
+    tx: Mutex<Option<Sender<String>>>,
 }
 
 impl<'me> Cpu<'me> for Intel8080 {
@@ -91,7 +91,7 @@ impl<'me> Cpu<'me> for Intel8080 {
     fn regs(&self) -> &Mutex<dyn CpuRegs + Send + Sync> {
         &self.cached_state
     }
-    fn trace_start(&self, tx: mpsc::Sender<String>) {
+    fn trace_start(&self, tx: Sender<String>) {
         *self.tx.lock() = Some(tx);
     }
     fn trace_end(&self) {

@@ -8,13 +8,17 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1.78"
 bitfield-struct = "0.6.0"
+cartridge = { version = "0.1.0", path = "../cartridge" }
 clap = { version = "4.5.1", features = ["derive"] }
+crossbeam-channel = "0.5.12"
 crossterm = "0.27.0"
+derivative = "2.2.0"
 dt-bindings = { version = "0.1.0", path = "../dt-bindings" }
 fdt = "0.1.5"
 futures = "0.3.30"
 parking_lot = "0.12.1"
 ratatui = "0.26.1"
+rgb = "0.8.37"
 unasm = { version = "0.1.0", path = "../unasm" }
 
 [build-dependencies]

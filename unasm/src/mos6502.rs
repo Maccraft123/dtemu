@@ -6,7 +6,6 @@ use nom::combinator::map;
 use nom::sequence::{preceded, terminated, delimited};
 use std::collections::HashSet;
 use crate::OperandPatches;
-use core::mem;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Addressing {

@@ -1,8 +1,8 @@
 use bitfield_struct::bitfield;
 use futures::pending;
 use crate::MemoryWrapper;
+use crossbeam_channel::Sender;
 use parking_lot::Mutex;
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use unasm::mos6502::{DatalessInstruction, Addressing};
@@ -36,7 +36,7 @@ struct Mos6502Stuff<'a> {
     mem: MemoryWrapper,
     cached_state: &'a Mutex<Mos6502State>,
     instruction_done: &'a AtomicBool,
-    trace_tx: &'a Mutex<Option<mpsc::Sender<String>>>
+    trace_tx: &'a Mutex<Option<Sender<String>>>
 }
 
 #[derive(Debug, Clone)]
@@ -60,7 +60,7 @@ pub struct Mos6502 {
     cached_state: Mutex<Mos6502State>,
     instruction_done: AtomicBool,
     mem: MemoryWrapper,
-    tx: Mutex<Option<mpsc::Sender<String>>>,
+    tx: Mutex<Option<Sender<String>>>,
 }
 
 impl<'me> Cpu<'me> for Mos6502 {
@@ -84,7 +84,7 @@ impl<'me> Cpu<'me> for Mos6502 {
     }
     fn disasm_fn(&self) -> &'static DisasmFn {
         //&{|bytes, addr| unasm::mos6502::disasm(bytes, addr.map(|v| v as u16)).to_string()}
-        &{|_, _| todo!()}
+        &{|bytes, _| format!("{:x?}", unasm::mos6502::Instruction::decode_from(bytes))}
     }
     fn instruction_done(&self) -> bool {
         self.instruction_done.load(Ordering::SeqCst)
@@ -92,7 +92,7 @@ impl<'me> Cpu<'me> for Mos6502 {
     fn regs(&self) -> &Mutex<dyn CpuRegs + Send + Sync> {
         &self.cached_state
     }
-    fn trace_start(&self, tx: mpsc::Sender<String>) {
+    fn trace_start(&self, tx: Sender<String>) {
         *self.tx.lock() = Some(tx);
     }
     fn trace_end(&self) {
@@ -125,6 +125,9 @@ impl Mos6502State {
         let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
         self.pc = u16::from_le_bytes([lo, hi]);
         let mut cycles = 6;
+        if self.pc == 0 {
+            eprintln!("the reset vector points at 0x0, i don't think that is ok but i'm carrying on. ~mos6502.rs");
+        }
 
         loop {
             cycles += 1;
@@ -132,7 +135,6 @@ impl Mos6502State {
             use unasm::mos6502::Opcode;
             
             let inst = DatalessInstruction::from_u8(memory.fetch8(self.pc as u32).await).unwrap();
-            //let inst = unasm::mos6502::decode_u8(memory.fetch8(self.pc as u32).await);
             inst_done.store(false, Ordering::SeqCst);
 
             match inst.opcode() {
@@ -286,7 +288,7 @@ impl Mos6502State {
                     self.push8(&memory, (self.pc & 0x00ff) as u8).await;
                     self.push8(&memory, self.flags.into_stack()).await;
                     self.flags.set_irq_disable(true);
-                    let (lo, hi) = (memory.fetch8(0xfffc).await, memory.fetch8(0xfffd).await);
+                    let (lo, hi) = (memory.fetch8(0xfffe).await, memory.fetch8(0xffff).await);
                     jumpto = Some(u16::from_le_bytes([lo, hi]));
                 },
                 Opcode::Rti => todo!(),
@@ -375,12 +377,12 @@ State on exit just before it: {:#x?}\r", other_state.lock());
 
     async fn push8(&mut self, memory: &MemoryWrapper, val: u8) {
         memory.set8(0x0100 | self.sp as u32, val).await;
-        self.sp -= 1;
+        self.sp = self.sp.wrapping_sub(1);
         pending!();
     }
 
     async fn pull8(&mut self, memory: &MemoryWrapper) -> u8 {
-        self.sp += 1;
+        self.sp = self.sp.wrapping_add(1);
         pending!();
         pending!();
         let val = memory.fetch8(0x0100 | self.sp as u32).await;

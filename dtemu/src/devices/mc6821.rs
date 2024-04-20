@@ -1,26 +1,28 @@
 use crate::devices::console_prelude::*;
-use std::sync::mpsc;
 use crossterm::event::KeyCode;
 
 // this entire file is a giant fucking hack
 
 #[derive(Debug)]
 pub struct Mc6821 {
-    output: Option<mpsc::Sender<char>>,
-    input: Option<mpsc::Receiver<Event>>,
+    output: Option<Sender<char>>,
+    input: Option<Receiver<Event>>,
     next_char: Option<u8>,
     name: String,
+    phandle: Option<usize>,
 }
 
 impl Device for Mc6821 {
     fn node_name(&self) -> &str { &self.name }
-    fn new(node: &FdtNode<'_, '_>) -> Box<Self> {
-        Box::new(Self {
+    fn phandle(&self) -> Option<usize> { self.phandle }
+    fn new(node: &FdtNode<'_, '_>) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
             output: None,
             input: None,
             next_char: None,
             name: node.name.to_string(),
-        } )
+            phandle: node.property("phandle").map(|p| p.as_usize()).flatten(),
+        } ))
     }
     fn as_mmio(&mut self) -> Option<&mut dyn Mmio> { Some(self) }
     fn as_console_output(&mut self) -> Option<&mut dyn ConsoleOutput> { Some(self) }
@@ -88,14 +90,14 @@ impl Mmio for Mc6821 {
 }
 
 impl ConsoleOutput for Mc6821 {
-    fn attach_outchan(&mut self, channel: mpsc::Sender<char>) {
+    fn attach_outchan(&mut self, channel: Sender<char>) {
         self.output = Some(channel);
     }
     fn terminal_size(&self) -> (u8, u8) { (40, 24) }
 }
 
 impl ConsoleInput for Mc6821 {
-    fn attach_inchan(&mut self, channel: mpsc::Receiver<Event>) {
+    fn attach_inchan(&mut self, channel: Receiver<Event>) {
         self.input = Some(channel);
     }
 }

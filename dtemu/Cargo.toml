@@ -20,6 +20,7 @@ parking_lot = "0.12.1"
 ratatui = "0.26.1"
 rgb = "0.8.37"
 asm-playground = { version = "0.1.0", path = "../asm-playground" }
+bin_file = "0.1.1"
 
 [build-dependencies]
 bindgen = "0.69.4"

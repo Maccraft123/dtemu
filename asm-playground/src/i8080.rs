@@ -49,9 +49,11 @@ impl Reg {
     fn from_bits(b1: bool, b2: bool, b3: bool) -> Reg {
         Reg::from_byte(b3_to_u8(b1, b2, b3))
     }
+    #[inline(always)]
     pub fn to_dst_byte(self) -> u8 {
         (self as u8) << 3
     }
+    #[inline(always)]
     pub fn to_src_byte(self) -> u8 {
         self as u8
     }
@@ -84,6 +86,7 @@ impl RegPair {
     fn to_byte(self) -> u8 {
         (self as u8) << 4
     }
+    #[inline(always)]
     pub fn low(&self) -> Reg {
         match self {
             Self::Bc => Reg::C,
@@ -92,6 +95,7 @@ impl RegPair {
             Self::Sp => panic!("what no don't"),
         }
     }
+    #[inline(always)]
     pub fn high(&self) -> Reg {
         match self {
             Self::Bc => Reg::B,
@@ -141,6 +145,7 @@ impl Condition {
             unsafe { mem::transmute(byte) }
         }
     }
+    #[inline(always)]
     pub fn to_byte(self) -> u8 {
         (self as u8) << 3
     }
@@ -352,6 +357,7 @@ impl DecodableInstruction for Instruction {
 }
 
 impl Instruction {
+    #[inline(always)]
     pub fn len(&self) -> usize {
         use Instruction::*;
         match self {
@@ -365,6 +371,7 @@ impl Instruction {
             | J(..) | Call(..) | C(..) => 3,
         }
     }
+    #[inline]
     pub fn decode_from(bytes: &[u8]) -> Self {
         use Instruction::*;
         let b = bytes[0].view_bits::<Msb0>();

@@ -42,6 +42,7 @@ pub enum Mos6502Operand {
 }
 
 impl Mos6502Operand {
+    #[inline(always)]
     pub fn addressing(&self) -> Addressing {
         match self {
             Self::Accumulator => Addressing::Accumulator,
@@ -59,6 +60,7 @@ impl Mos6502Operand {
             Self::ZeroPageY(_) => Addressing::ZeroPageY,
         }
     }
+    #[inline(always)]
     pub fn to_u8(&self) -> Option<u8> {
         match self {
             Self::Immediate(val) => Some(*val),
@@ -69,6 +71,7 @@ impl Mos6502Operand {
             _ => None,
         }
     }
+    #[inline(always)]
     pub fn to_u16(&self) -> Option<u16> {
         match self {
             Self::Absolute(val) => Some(*val),
@@ -523,6 +526,7 @@ impl DatalessInstruction {
         (0xfe, inst!(Inc, AbsoluteX)),
     ];
     
+    #[inline]
     pub fn from_u8(val: u8) -> Option<Self> {
         for (i, ret) in Self::LUT {
             if val == *i {
@@ -532,6 +536,7 @@ impl DatalessInstruction {
         None
     }
 
+    #[inline]
     pub fn to_u8(&self) -> Option<u8> {
         for (ret, i) in Self::LUT {
             if self == i {
@@ -541,18 +546,22 @@ impl DatalessInstruction {
         None
     }
 
+    #[inline(always)]
     pub fn opcode(&self) -> Opcode {
         self.0
     }
 
+    #[inline(always)]
     pub fn addressing(&self) -> Addressing {
         self.1
     }
 
+    #[inline(always)]
     pub fn add_data(&self, bytes: &[u8]) -> Instruction {
         Instruction(self.0, op(self.1, bytes))
     }
 
+    #[inline(always)]
     pub fn len(&self) -> u16 {
         use Addressing::*;
         match self.1 {
@@ -647,6 +656,7 @@ impl Instruction {
     fn erase_data(&self) -> DatalessInstruction {
         DatalessInstruction(self.0, self.1.addressing())
     }
+    #[inline]
     pub fn decode_from(bytes: &[u8]) -> Self {
         DatalessInstruction::from_u8(bytes[0])
             .unwrap()

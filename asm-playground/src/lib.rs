@@ -1,5 +1,6 @@
 pub mod i8080;
 pub mod mos6502;
+pub mod mc6809;
 
 use unasm_derive::Operand;
 pub trait Operand: Sized {

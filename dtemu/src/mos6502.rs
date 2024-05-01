@@ -422,7 +422,7 @@ State on exit just before it: {:#x?}\r", other_state.lock());
             result = self.a as u16 + self.flags.carry() as u16 + val as u16;
 
             self.flags.set_carry(result > 0xff);
-            self.flags.set_overflow((!(self.a ^ val) & (self.a ^ (result & 0xff) as u8) & 0x80) != 0);
+            //self.flags.set_overflow((!(self.a ^ val) & (self.a ^ (result & 0xff) as u8) & 0x80) != 0);
         }
 
         //if self.a & 0x80 == val & 0x80 {

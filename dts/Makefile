@@ -7,7 +7,9 @@ default: all
 dtbs: apple1.dtb \
 	pet2001.dtb \
 	nes.dtb \
-	generic-cpm.dtb
+	generic-cpm.dtb \
+	grants-6809.dtb \
+	moto-devboard.dtb
 
 all: dtbs
 

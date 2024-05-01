@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::any::Any;
 
 pub mod mc6821;
+pub mod mc6850;
 pub mod memory;
 pub mod pvconsole;
 //pub mod nescart;
@@ -94,6 +95,7 @@ pub fn probe(node: &FdtNode<'_, '_>) -> Option<Arc<Mutex<dyn MmioDevice>>> {
         dev = match compatible {
             "memory" => Some(memory::Memory::new(node)),
             "motorola,mc6821" => Some(mc6821::Mc6821::new(node)),
+            "motorola,mc6850" => Some(mc6850::Mc6850::new(node)),
             "generic-rom" => Some(memory::Rom::new(node)),
             "dtemu,pv-console" => Some(pvconsole::PvConsole::new(node)),
             //"nintendo,nes-cartridge" => Some(nescart::NesCartridge::new(node)),

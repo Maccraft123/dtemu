@@ -16,6 +16,7 @@ use crossbeam_channel::{unbounded, bounded, Receiver, Sender};
 mod devices;
 mod mos6502;
 mod i8080;
+mod mc6809;
 mod cpu;
 
 use cpu::{Cpu, CpuRegs};
@@ -48,19 +49,20 @@ impl MemoryWrapper {
     }
     async fn fetch8(&self, addr: u32) -> u8 {
         pending!();
-        if addr == 0x4016 {
-            panic!("joystick read woo");
-        }
-        self.ptr.read8(addr)
+        let v = self.ptr.read8(addr);
+        v
     }
-    async fn set8(&self, addr: u32, val: u8) {
+    async fn set8(&self, addr: u32, v: u8) {
         pending!();
-        self.ptr.write8(addr, val)
+        self.ptr.write8(addr, v)
+    }
+    async fn fetch16_le(&self, addr: u32) -> u16 {
+        u16::from_le_bytes([self.fetch8(addr).await, self.fetch8(addr+1).await])
+    }
+    async fn fetch16_be(&self, addr: u32) -> u16 {
+        u16::from_be_bytes([self.fetch8(addr).await, self.fetch8(addr+1).await])
     }
     async fn fetch16(&self, addr: u32) -> u16 {
-        if addr & 0x000f == 0xf { // this correct? idk
-            pending!();
-        }
         u16::from_le_bytes([self.fetch8(addr).await, self.fetch8(addr+1).await])
     }
 }
@@ -82,29 +84,30 @@ impl MemoryMap {
         self.segments.push(Segment{phandle, device, start, size, mirror_size})
     }
     fn read8(&self, addr: u32) -> u8 {
-        if let Some((idx, addr)) = self.lut.lock()[addr as usize] {
-            return self.segments.get(idx as usize).unwrap().device.lock().read8(addr as u32);
-        } else {
+        //if let Some((idx, addr)) = self.lut.lock()[addr as usize] {
+        //    return self.segments.get(idx as usize).unwrap().device.lock().read8(addr as u32);
+        //} else {
             for (i, seg) in self.segments.iter().enumerate() {
                 if addr >= seg.start && addr < (seg.start + seg.size) {
-                    self.lut.lock()[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
+
+                    //self.lut.lock()[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
                     return seg.device.lock().read8((addr - seg.start) % seg.mirror_size);
                 }
             }
-        }
+        //}
         0
     }
     fn write8(&self, addr: u32, val: u8) {
-        if let Some((idx, addr)) = self.lut.lock()[addr as usize] {
-            return self.segments[idx as usize].device.lock().write8(addr as u32, val);
-        } else {
+        //if let Some((idx, addr)) = self.lut.lock()[addr as usize] {
+        //    return self.segments[idx as usize].device.lock().write8(addr as u32, val);
+        //} else {
             for (i, seg) in self.segments.iter().enumerate() {
                 if addr >= seg.start && addr < (seg.start + seg.size) {
-                    self.lut.lock()[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
+                    //self.lut.lock()[addr as usize] = Some((i as u8, ((addr - seg.start) % seg.mirror_size) as u16));
                     return seg.device.lock().write8((addr - seg.start) % seg.mirror_size, val);
                 }
             }
-        }
+        //}
     }
 }
 
@@ -169,17 +172,20 @@ impl EmuTui {
         let mut debugger = false;
         let mut stdout = io::stdout();
         let mut terminal = None;
+        let mut page = 0u8;
         terminal::enable_raw_mode()
             .expect("failed to enable raw mode");
 
         while info.run.load(Ordering::SeqCst) {
-            if let Ok(true) = event::poll(Duration::from_millis(50)) {
+            if let Ok(true) = event::poll(Duration::from_millis(40)) {
                 let ev = event::read().unwrap();
                 if debugger {
                     match ev {
                         Event::Key(kev) => {
                             match kev.code {
                                 KeyCode::Esc => info.run.store(false, Ordering::SeqCst),
+                                KeyCode::PageUp => page = page.wrapping_add(1),
+                                KeyCode::PageDown => page = page.wrapping_sub(1),
                                 KeyCode::Char(c) => match c {
                                     // toggle debugger view
                                     '`' => {
@@ -267,15 +273,16 @@ impl EmuTui {
                     let layout = Layout::horizontal([
                         Constraint::Min(1),
                         Constraint::Length(7),
-                        Constraint::Length(60),
+                        Constraint::Length(62),
                     ]);
                     let [regs, stack, memory] = layout.areas(frame.size());
 
                     let mut mem_hex = String::new();
                     for x in 0x00..0x10 {
-                        mem_hex += &format!("{:x}0: ", x);
+                        mem_hex += &format!("{:02x}{:x}0: ", page, x);
                         for y in 0x0..0x10 {
-                            mem_hex += &format!("{:02x} ", info.mem.fetch8_fast(x << 4 | y));
+                            let addr = u16::from_le_bytes([x << 4 | y, page]);
+                            mem_hex += &format!("{:02x} ", info.mem.fetch8_fast(addr as u32));
                         }
                         mem_hex += "\n";
                     }
@@ -395,14 +402,6 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
                         d.device.lock().tick();
                     }
 
-                    if singlestep.load(Ordering::SeqCst) {
-                        let mut step = do_a_step.lock();
-                        if !*step {
-                            do_a_step_condvar.wait(&mut step);
-                        }
-                        *step = false;
-                    }
-
                     cycles += 1;
 
                     if !run.load(Ordering::SeqCst) {
@@ -422,9 +421,9 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
                 }
 
                 // TODO: put into debugger 
-                //if cpu.regs().lock().next_instruction() == 0x1000 {
-                //    singlestep.store(true, Ordering::SeqCst);
-                //}
+                if mach.cpu.regs().lock().next_instruction() == 0xdbb8 {
+                    singlestep.store(true, Ordering::SeqCst);
+                }
             }
             cycles -= 1;
         } );
@@ -520,6 +519,7 @@ fn main() {
             match compat {
                 "mos,6502" => cpu = Some(mos6502::Mos6502::new(mem.clone())),
                 "intel,8080" => cpu = Some(i8080::Intel8080::new(mem.clone())),
+                "motorola,mc6809" => cpu = Some(mc6809::Mc6809::new(mem.clone())),
                 _ => ()
             }
             if cpu.is_some() {

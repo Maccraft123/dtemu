@@ -60,7 +60,7 @@ impl Mmio for Rom {
         if self.allow_write {
             self.data[addr as usize] = val
         } else {
-            eprintln!("Invalid write to ROM")
+            //eprintln!("Invalid write to ROM")
         }
     }
 }

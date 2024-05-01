@@ -1,0 +1,36 @@
+/dts-v1/;
+
+/ {
+	compatible = "grant-searle,6509-simple-computer", "motorola,mc6509";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "motorola,mc6809";
+			reg = <0>;
+			//dtemu,override-reset-vector = <0xff00>;
+		};
+	};
+
+	memory@0 {
+		compatible = "memory";
+		reg = <0x0 0xa000>;
+	};
+
+	serial@a000 {
+		compatible = "motorola,mc6850";
+		reg = <0xa000 0x2000>;
+		//reg = <0xa000 0x2000>;
+	};
+
+	rom@c000 {
+		compatible = "generic-rom";
+		rom,name = "basic";
+		allow-write;
+		reg = <0xc000 0x4000>;
+	};
+};

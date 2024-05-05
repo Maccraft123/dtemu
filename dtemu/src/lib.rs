@@ -421,9 +421,9 @@ fn run(mut mach: Machine, mut do_cycles: Option<u64>, do_dump_cpu: bool) {
                 }
 
                 // TODO: put into debugger 
-                //if mach.cpu.regs().lock().next_instruction() == 0xdbb8 {
-                //    singlestep.store(true, Ordering::SeqCst);
-                //}
+                if mach.cpu.regs().lock().next_instruction() == 0xdbb8 {
+                    singlestep.store(true, Ordering::SeqCst);
+                }
             }
             cycles -= 1;
         } );
@@ -436,17 +436,17 @@ fn main() {
     let mut firmwares: HashMap<&str, Vec<u8>> = HashMap::new();
     for firmware in args.fw.iter() {
         if let Some((name, path)) = firmware.split_once('=') {
-            /*if let Ok(binfile) = bin_file::BinFile::from_file(&path) {
+            if let Ok(binfile) = bin_file::BinFile::from_file(&path) {
                 let end = binfile.maximum_address()
                     .expect("Failed to read maximum address of a binary file");
                 let start = binfile.minimum_address()
                     .expect("Failed to read minimum address of a binary file");
                 firmwares.insert(name, binfile.to_bytes(start..end, None).unwrap());
-            } else {*/
+            } else {
                 let data = fs::read(&path)
                     .expect(&format!("Failed to load {:?} file", path));
                 firmwares.insert(name, data);
-            //}
+            }
         } else {
             eprintln!("Invalid syntax {:?}, expected \"fw_name=file_path\"", firmware);
         }

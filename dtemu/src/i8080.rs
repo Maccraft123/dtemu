@@ -299,6 +299,8 @@ impl Intel8080State {
             let inst = Instruction::decode_from(&bytes);
 
             use std::io::Write;
+            //println!("I: {:x?} PC: {:04x} A: {:02x} BC: {:04x} DE: {:04x} F: {:02x}\r", inst, self.pc, self.a, self.regpair(&mem, RegPair::Bc), self.regpair(&mem, RegPair::De), self.psw.as_stack());
+
             //println!("AF: {:02x}{:02x}, BC: {:04x}, DE: {:04x}, HL: {:04x}, SP: {:04x}\r",
             //    self.a, self.psw.as_stack(), self.regpair(&mem, RegPair::Bc), self.regpair(&mem, RegPair::De),
             //    self.regpair(&mem, RegPair::Hl), self.sp);

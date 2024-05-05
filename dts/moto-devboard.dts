@@ -1,7 +1,7 @@
 /dts-v1/;
 
 / {
-	compatible = "intel,8080";
+	compatible = "motorola,mc6809-devboard", "motorola,mc6809";
 	#address-cells = <1>;
 	#size-cells = <1>;
 
@@ -10,22 +10,26 @@
 		#size-cells = <0>;
 		cpu@0 {
 			device_type = "cpu";
-			compatible = "intel,8080";
+			compatible = "motorola,mc6809";
 			reg = <0>;
 			//dtemu,override-reset-vector = <0xff00>;
 		};
 	};
 
-
 	memory@0 {
 		compatible = "memory";
-		reg = <0x0 0x100>;
+		reg = <0x0 0x8000>;
 	};
 
-	rom@dc00 {
+	serial@a000 {
+		compatible = "motorola,mc6850";
+		reg = <0xa000 0x2>;
+		//reg = <0xa000 0x2000>;
+	};
+
+	rom@c000 {
 		compatible = "generic-rom";
-		rom,name = "cpmprogram";
-		reg = <0x100 0xfeff>;
-		rom,allow-write;
+		rom,name = "basic";
+		reg = <0xc000 0x4000>;
 	};
 };

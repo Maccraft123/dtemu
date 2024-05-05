@@ -415,7 +415,6 @@ impl Mc6809State {
             if self.i.has_prefix() {
                 self.pc += 1;
             }
-            self.pc += inst.opcode_len();
             println!("running {:?}, len {:x}\r\n", self.i, self.i.unprefixed_len());
             match self.i.opcode() {
                 // Load/Store
@@ -661,6 +660,7 @@ impl Mc6809State {
             inst_done.store(true, Ordering::SeqCst);
             other_state.lock().clone_from(self);
             pending!();
+            self.pc += inst.unprefixed_len() as u16;
             if let Some(0) = jump { return; }
             if let Some(target) = jump {
                 //eprintln!("jump to {:x}\r", target);

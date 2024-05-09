@@ -221,6 +221,7 @@ mod sealed_impl {
 pub trait Cpu: Sized {
     type AddressWidth: UnsignedInteger;
     type Instruction: Sized;
+    fn pc(&self) -> Self::AddressWidth;
     fn new() -> Self;
     fn next_instruction(&self, memory: &impl Bus<Self::AddressWidth>) -> Self::Instruction;
     fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>) -> impl std::future::Future<Output = Self::AddressWidth> + Send;

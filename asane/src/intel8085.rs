@@ -34,7 +34,8 @@ enum AluOp {
 #[derive(Clone, Debug)]
 pub struct Intel8080 {
     pc: u16,
-    psw: (u8, Flags),
+    a: u8,
+    f: Flags,
     bc: TwoBytes,
     de: TwoBytes,
     hl: TwoBytes,
@@ -44,7 +45,7 @@ pub struct Intel8080 {
 impl Intel8080 {
     #[inline(always)]
     pub fn flags(&self) -> Flags {
-        self.psw.1
+        self.f
     }
     #[inline(always)]
     pub fn pc(&self) -> u16 {
@@ -54,7 +55,7 @@ impl Intel8080 {
     pub fn set_reg(&mut self, m: &mut impl BusWo<u16>, reg: Reg, val: u8) {
         use Reg::*;
         match reg {
-            A => self.psw.0 = val,
+            A => self.a = val,
             B => self.bc.set_hi(val),
             C => self.bc.set_lo(val),
             D => self.de.set_hi(val),
@@ -68,7 +69,7 @@ impl Intel8080 {
     pub fn reg(&self, m: &impl BusRo<u16>, reg: Reg) -> u8 {
         use Reg::*;
         match reg {
-            A => self.psw.0,
+            A => self.a,
             B => self.bc.hi(),
             C => self.bc.lo(),
             D => self.de.hi(),
@@ -100,9 +101,9 @@ impl Intel8080 {
     }
     #[inline]
     fn update_zsp(&mut self, val: u8) -> u8 {
-        self.psw.1.set_zero(val == 0);
-        self.psw.1.set_sign(val & 0x80 != 0);
-        self.psw.1.set_parity_even(val.count_ones() % 2 == 0);
+        self.f.set_zero(val == 0);
+        self.f.set_sign(val & 0x80 != 0);
+        self.f.set_parity_even(val.count_ones() % 2 == 0);
         val
     }
     #[inline]
@@ -133,14 +134,14 @@ impl Intel8080 {
     #[inline(always)]
     fn has_cond(&self, cond: Condition) -> bool {
         match cond {
-            Condition::NonZero => !self.psw.1.zero(),
-            Condition::Zero => self.psw.1.zero(),
-            Condition::NoCarry => !self.psw.1.carry(),
-            Condition::Carry => self.psw.1.carry(),
-            Condition::Odd => !self.psw.1.parity_even(),
-            Condition::Even => self.psw.1.parity_even(),
-            Condition::Plus => !self.psw.1.sign(),
-            Condition::Minus => self.psw.1.sign(),
+            Condition::NonZero => !self.f.zero(),
+            Condition::Zero => self.f.zero(),
+            Condition::NoCarry => !self.f.carry(),
+            Condition::Carry => self.f.carry(),
+            Condition::Odd => !self.f.parity_even(),
+            Condition::Even => self.f.parity_even(),
+            Condition::Plus => !self.f.sign(),
+            Condition::Minus => self.f.sign(),
         }
     }
     #[inline(always)]
@@ -155,26 +156,25 @@ impl Intel8080 {
                     _ => unreachable!(),
                 };
                 if op == And {
-                    self.psw.1.set_half_carry(((val1 | val2) & 0x08) != 0);
+                    self.f.set_half_carry(((val1 | val2) & 0x08) != 0);
                 } else {
-                    self.psw.1.set_half_carry(false);
+                    self.f.set_half_carry(false);
                 }
-                self.psw.1.set_carry(false);
+                self.f.set_carry(false);
                 result
             },
             Add(use_carry) => {
-                let carry = (use_carry & self.psw.1.carry()) as u8;
-                let result = val1 as u16 + val2 as u16 + carry as u16;
-                //self.psw.1.set_carry(val1 as u16 + val2 as u16 + carry as u16 > 0xff);
-                self.psw.1.set_carry(self.carry(8, val1, val2, carry));
-                self.psw.1.set_half_carry((val1 ^ result as u8 ^ val2) & 0x10 != 0);
+                let carry = (use_carry & self.f.carry()) as u8;
+                let result = val1.wrapping_add(val2).wrapping_add(carry);
+                self.f.set_carry(self.carry(8, val1, val2, carry));
+                self.f.set_half_carry((val1 ^ result as u8 ^ val2) & 0x10 != 0);
                 result as u8
             },
             Sub(use_carry) => {
-                let carry = (use_carry & self.psw.1.carry()) as u8;
+                let carry = (use_carry & self.f.carry()) as u8;
                 let result = val1.wrapping_sub(val2).wrapping_sub(carry);
-                self.psw.1.set_carry((val1 as u16) < val2 as u16 + carry as u16);
-                self.psw.1.set_half_carry((val1 as i8 & 0x0f) - (val2 as i8 & 0x0f) - (carry as i8) >= 0x00);
+                self.f.set_carry((val1 as u16) < val2 as u16 + carry as u16);
+                self.f.set_half_carry((val1 as i8 & 0x0f) - (val2 as i8 & 0x0f) - (carry as i8) >= 0x00);
                 result as u8
             },
         };
@@ -191,6 +191,10 @@ impl Intel8080 {
 impl Cpu for Intel8080 {
     type AddressWidth = u16;
     type Instruction = i8080::Instruction;
+    #[inline(always)]
+    fn pc(&self) -> u16 {
+        self.pc
+    }
     #[inline]
     fn next_instruction(&self, m: &impl Bus<u16>) -> Self::Instruction {
         let bytes = [m.read8(self.pc), m.read8(self.pc+1), m.read8(self.pc+2)];
@@ -201,7 +205,8 @@ impl Cpu for Intel8080 {
         Self {
             pc: 0x0,
             sp: 0x0,
-            psw: (0, Flags::from(0x02)),
+            a: 0x0,
+            f: Flags::from(0x02),
             bc: TwoBytes::zeroed(),
             de: TwoBytes::zeroed(),
             hl: TwoBytes::zeroed(),
@@ -212,12 +217,13 @@ impl Cpu for Intel8080 {
         async {
             let bytes = [m.read8(self.pc), m.read8(self.pc+1), m.read8(self.pc+2)];
             let inst = Instruction::decode_from(&bytes);
-            //println!("I: {:x?} PC: {:04x} A: {:02x} BC: {:04x} DE: {:04x} F: {:02x}",
-                //inst, self.pc, self.psw.0, self.bc.word(), self.de.word(), self.psw.1.to_8080());
             self.pc += inst.len() as u16;
             match inst {
                 Jmp(addr) => self.pc = addr,
-                Rst(addr) => self.pc = addr as u16,
+                Rst(addr) => {
+                    self.push16(m, self.pc).await;
+                    self.pc = addr as u16;
+                },
                 J(cond, addr) => {
                     if self.has_cond(cond) {
                         self.pc = addr;
@@ -243,25 +249,25 @@ impl Cpu for Intel8080 {
                 Mov(dst, src) => self.set_reg(m, dst, self.reg(m, src)),
                 Mvi(dst, val) => self.set_reg(m, dst, val),
                 Lxi(rp, val) => self.set_rp(rp, val),
-                Lda(addr) => self.psw.0 = m.read8(addr),
-                Sta(addr) => m.write8(addr, self.psw.0),
-                Ldax(rp) => self.psw.0 = m.read8(self.rp(rp)),
-                Stax(rp) => m.write8(self.rp(rp), self.psw.0),
+                Lda(addr) => self.a = m.read8(addr),
+                Sta(addr) => m.write8(addr, self.a),
+                Ldax(rp) => self.a = m.read8(self.rp(rp)),
+                Stax(rp) => m.write8(self.rp(rp), self.a),
                 Lhld(addr) => self.hl.set_word(m.read16le(addr)),
                 Shld(addr) => m.write16le(addr, self.hl.word()),
                 Sphl => self.set_rp(RegPair::Sp, self.rp(RegPair::Hl)),
                 Push(rp) => {
                     if rp == RegPair::Sp {
-                        self.push8(m, self.psw.0).await;
-                        self.push8(m, self.psw.1.to_8080()).await;
+                        self.push8(m, self.a).await;
+                        self.push8(m, self.f.to_8080()).await;
                     } else {
                         self.push16(m, self.rp(rp)).await;
                     }
                 },
                 Pop(rp) => {
                     if rp == RegPair::Sp {
-                        self.psw.1 = self.pop8(m).await.into();
-                        self.psw.0 = self.pop8(m).await;
+                        self.f = self.pop8(m).await.into();
+                        self.a = self.pop8(m).await;
                     } else {
                         let tmp = self.pop16(m).await;
                         self.set_rp(rp, tmp);
@@ -273,90 +279,90 @@ impl Cpu for Intel8080 {
                     self.hl.set_word(new);
                 },
                 Pchl => self.pc = self.hl.word(),
-                Xri(val) => self.psw.0 = self.alu(AluOp::Xor, self.psw.0, val),
-                Xra(reg) => self.psw.0 = self.alu(AluOp::Xor, self.psw.0, self.reg(m, reg)),
-                Ori(val) => self.psw.0 = self.alu(AluOp::Or, self.psw.0, val),
-                Ora(reg) => self.psw.0 = self.alu(AluOp::Or, self.psw.0, self.reg(m, reg)),
-                Ani(val) => self.psw.0 = self.alu(AluOp::And, self.psw.0, val),
-                Ana(reg) => self.psw.0 = self.alu(AluOp::And, self.psw.0, self.reg(m, reg)),
-                Add(reg) => self.psw.0 = self.alu(AluOp::Add(false), self.psw.0, self.reg(m, reg)),
-                Adc(reg) => self.psw.0 = self.alu(AluOp::Add(true), self.psw.0, self.reg(m, reg)),
-                Adi(val) => self.psw.0 = self.alu(AluOp::Add(false), self.psw.0, val),
-                Aci(val) => self.psw.0 = self.alu(AluOp::Add(true), self.psw.0, val),
-                Sub(reg) => self.psw.0 = self.alu(AluOp::Sub(false), self.psw.0, self.reg(m, reg)),
-                Sbb(reg) => self.psw.0 = self.alu(AluOp::Sub(true), self.psw.0, self.reg(m, reg)),
-                Sui(val) => self.psw.0 = self.alu(AluOp::Sub(false), self.psw.0, val),
-                Sbi(val) => self.psw.0 = self.alu(AluOp::Sub(true), self.psw.0, val),
-                //Cmp(reg) => { self.alu(AluOp::Sub(false), self.psw.0, self.reg(m, reg)); },
-                //Cpi(val) => { self.alu(AluOp::Sub(false), self.psw.0, val); },
+                Xri(val) => self.a = self.alu(AluOp::Xor, self.a, val),
+                Xra(reg) => self.a = self.alu(AluOp::Xor, self.a, self.reg(m, reg)),
+                Ori(val) => self.a = self.alu(AluOp::Or, self.a, val),
+                Ora(reg) => self.a = self.alu(AluOp::Or, self.a, self.reg(m, reg)),
+                Ani(val) => self.a = self.alu(AluOp::And, self.a, val),
+                Ana(reg) => self.a = self.alu(AluOp::And, self.a, self.reg(m, reg)),
+                Add(reg) => self.a = self.alu(AluOp::Add(false), self.a, self.reg(m, reg)),
+                Adc(reg) => self.a = self.alu(AluOp::Add(true), self.a, self.reg(m, reg)),
+                Adi(val) => self.a = self.alu(AluOp::Add(false), self.a, val),
+                Aci(val) => self.a = self.alu(AluOp::Add(true), self.a, val),
+                Sub(reg) => self.a = self.alu(AluOp::Sub(false), self.a, self.reg(m, reg)),
+                Sbb(reg) => self.a = self.alu(AluOp::Sub(true), self.a, self.reg(m, reg)),
+                Sui(val) => self.a = self.alu(AluOp::Sub(false), self.a, val),
+                Sbi(val) => self.a = self.alu(AluOp::Sub(true), self.a, val),
+                //Cmp(reg) => { self.alu(AluOp::Sub(false), self.a, self.reg(m, reg)); },
+                //Cpi(val) => { self.alu(AluOp::Sub(false), self.a, val); },
                 Cpi(_) | Cmp(_) => {
                     let val = match inst {
                         Cpi(imm) => imm,
                         Cmp(reg) => self.reg(m, reg),
                         _ => unreachable!(),
                     };
-                    let (result, carry) = self.psw.0.overflowing_sub(val);
-                    //self.psw.1.set_carry(val > self.psw.0);
-                    self.psw.1.set_carry(carry);
-                    let carry4 = !(self.psw.0 ^ result as u8 ^ val) & 0x10;
-                    self.psw.1.set_half_carry(carry4 != 0);
+                    let (result, carry) = self.a.overflowing_sub(val);
+                    //self.f.set_carry(val > self.a);
+                    self.f.set_carry(carry);
+                    let carry4 = !(self.a ^ result as u8 ^ val) & 0x10;
+                    self.f.set_half_carry(carry4 != 0);
                     self.update_zsp(result as u8);
                 },
                 Dad(rp) => {
                     let (result, carry) = self.hl.word()
                         .overflowing_add(self.rp(rp));
-                    self.psw.1.set_carry(carry);
+                    self.f.set_carry(carry);
                     self.hl.set_word(result);
                 },
-                Stc => self.psw.1.set_carry(true),
-                Cmc => self.psw.1.set_carry(!self.psw.1.carry()),
-                Cma => self.psw.0 = self.psw.0 ^ 0xff,
+                Stc => self.f.set_carry(true),
+                Cmc => self.f.set_carry(!self.f.carry()),
+                Cma => self.a = self.a ^ 0xff,
                 Daa => {
                     // HEAVILY inspired by https://github.com/GunshipPenguin/lib8080/blob/master/src/i8080.c#L405
                     let mut add = 0;
 
-                    if self.psw.1.half_carry() || self.psw.0 & 0x0f > 9 {
+                    if self.f.half_carry() || self.a & 0x0f > 9 {
                         add = 0x06
                     }
 
-                    if self.psw.1.carry() || (self.psw.0 & 0xf0) > 0x90
-                        || ((self.psw.0 & 0xf0) >= 0x90 && self.psw.0 & 0x0F > 9)
+                    if self.f.carry() || (self.a & 0xf0) > 0x90
+                        || ((self.a & 0xf0) >= 0x90 && self.a & 0x0F > 9)
                     {
                         add |= 0x60;
-                        self.psw.1.set_carry(true);
+                        self.f.set_carry(true);
                     }
-                    self.psw.1.set_half_carry((self.psw.0 & 0x0F) + (add as u8 & 0x0F) > 0x0F);
-                    self.psw.0 = self.update_zsp(self.psw.0.wrapping_add(add));
+                    self.f.set_half_carry((self.a & 0x0F) + (add as u8 & 0x0F) > 0x0F);
+                    self.a = self.update_zsp(self.a.wrapping_add(add));
                 },
                 Dcr(reg) => {
                     self.set_reg(m, reg, self.reg(m, reg).wrapping_sub(1));
                     self.update_zsp(self.reg(m, reg));
-                    self.psw.1.set_half_carry(!((self.reg(m, reg) & 0xf) == 0xf));
+                    self.f.set_half_carry(!((self.reg(m, reg) & 0xf) == 0xf));
                 },
                 Inr(reg) => {
                     self.set_reg(m, reg, self.reg(m, reg).wrapping_add(1));
                     self.update_zsp(self.reg(m, reg));
-                    self.psw.1.set_half_carry(self.reg(m, reg) & 0xf == 0x00);
+                    self.f.set_half_carry(self.reg(m, reg) & 0xf == 0x00);
                 },
                 Inx(rp) => self.set_rp(rp, self.rp(rp).wrapping_add(1)),
                 Dcx(rp) => self.set_rp(rp, self.rp(rp).wrapping_sub(1)),
                 Rrc => {
-                    self.psw.0 = self.psw.0.rotate_right(1);
-                    self.psw.1.set_carry(self.psw.0 & 0x80 != 0);
+                    self.a = self.a.rotate_right(1);
+                    self.f.set_carry(self.a & 0x80 != 0);
                 },
                 Rlc => {
-                    self.psw.0 = self.psw.0.rotate_left(1);
-                    self.psw.1.set_carry(self.psw.0 & 0x01 != 0);
+                    self.a = self.a.rotate_left(1);
+                    self.f.set_carry(self.a & 0x01 != 0);
                 },
                 Rar => {
-                    let carry = self.psw.0 & 0x1 != 0;
-                    self.psw.0 = (self.psw.0 >> 1) | (self.psw.1.carry() as u8 * 0x80);
-                    self.psw.1.set_carry(carry);
+                    let carry = self.a & 0x1 != 0;
+                    self.a = (self.a >> 1) | (self.f.carry() as u8 * 0x80);
+                    self.f.set_carry(carry);
                 },
                 Ral => {
-                    let carry = self.psw.0 & 0x80 != 0;
-                    self.psw.0 = (self.psw.0 << 1) | (self.psw.1.carry() as u8);
-                    self.psw.1.set_carry(carry);
+                    let carry = self.a & 0x80 != 0;
+                    self.a = (self.a << 1) | (self.f.carry() as u8);
+                    self.f.set_carry(carry);
                 },
                 Di | Ei | Nop => (),
                 _ => todo!("{:x?}", inst),

@@ -19,6 +19,9 @@ struct OperandInput {
     data: ast::Data<OperandField, util::Ignored>,
 }
 
+#[proc_macro_derive(NoOperand, attributes(operand))]
+pub fn no_operand(_: TokenStream) -> TokenStream { quote!().into() }
+
 #[proc_macro_derive(Operand, attributes(operand))]
 pub fn operand(input: TokenStream) -> TokenStream {
     let input = OperandInput::from_derive_input(&parse_macro_input!(input as DeriveInput)).unwrap();
@@ -50,7 +53,7 @@ pub fn operand(input: TokenStream) -> TokenStream {
     let name = input.ident;
     quote! {
         impl Operand for #name {
-            fn parse(_: &::std::collections::HashSet<String>, _: u32, _: &crate::OperandPatches) -> impl FnMut(&str) -> nom::IResult<&str, #name> {
+            fn parse(_: &::std::collections::HashSet<String>, _: u32, _: &crate::parse::OperandPatches) -> impl FnMut(&str) -> nom::IResult<&str, #name> {
                 |s| { ::nom::combinator::map(
                     ::nom::branch::alt((
                         #(#parsers),*
@@ -80,6 +83,9 @@ struct OpcodeInput {
     ident: Ident,
     data: ast::Data<OpcodeField, util::Ignored>,
 }
+
+#[proc_macro_derive(NoParsableOpcode, attributes(opcode))]
+pub fn no_opcode(_: TokenStream) -> TokenStream { quote!().into() }
 
 #[proc_macro_derive(ParsableOpcode, attributes(opcode))]
 pub fn opcode(input: TokenStream) -> TokenStream {
@@ -162,6 +168,9 @@ struct InstructionInput {
     #[darling(default)]
     fixup: bool,
 }
+
+#[proc_macro_derive(NoParsableInstruction, attributes(instruction))]
+pub fn no_parsable_instruction(_: TokenStream) -> TokenStream { quote!().into() }
 
 #[proc_macro_derive(ParsableInstruction, attributes(instruction))]
 pub fn instruction(input: TokenStream) -> TokenStream {
@@ -268,9 +277,9 @@ pub fn instruction(input: TokenStream) -> TokenStream {
 
             quote! {
                 impl ParsableInstruction for #ty {
-                    fn parse(labels: &::std::collections::HashSet<String>) -> impl FnMut(&str) -> ::nom::IResult<&str, (Self, crate::OperandPatches)> {
+                    fn parse(labels: &::std::collections::HashSet<String>) -> impl FnMut(&str) -> ::nom::IResult<&str, (Self, crate::parse::OperandPatches)> {
                         |s| {
-                            let patches = crate::OperandPatches::new();
+                            let patches = crate::parse::OperandPatches::new();
                             let ret = ::nom::combinator::map(
                                 ::nom::branch::alt((
                                     #(#parse_chunks),*
@@ -300,9 +309,9 @@ pub fn instruction(input: TokenStream) -> TokenStream {
             }
             quote! {
                 impl ParsableInstruction for #ty {
-                    fn parse(labels: &::std::collections::HashSet<String>) -> impl FnMut(&str) -> ::nom::IResult<&str, (Self, crate::OperandPatches)> + '_ {
+                    fn parse(labels: &::std::collections::HashSet<String>) -> impl FnMut(&str) -> ::nom::IResult<&str, (Self, crate::parse::OperandPatches)> + '_ {
                         |s| {
-                            let patches = crate::OperandPatches::new();
+                            let patches = crate::parse::OperandPatches::new();
                             let ret = ::nom::combinator::map(
                                 ::nom::sequence::pair(
                                     <#opcode_ty as ParsableOpcode>::parse,

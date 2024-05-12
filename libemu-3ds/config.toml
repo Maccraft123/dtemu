@@ -1,0 +1,23 @@
+
+[Audio]
+DSPEmulation = "null"
+EnableAudio = false
+
+[Battery]
+BatteryPercentage = 3
+ChargerPlugged = true
+
+[GPU]
+EnableShaderJIT = true
+EnableVSync = true
+Renderer = "opengl"
+
+[General]
+DefaultRomPath = ""
+EnableDiscordRPC = false
+UsePortableBuild = false
+
+[SD]
+UseVirtualSD = true
+WriteProtectVirtualSD = false
+

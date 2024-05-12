@@ -1,12 +1,3 @@
-use super::{Operand, ParsableOpcode, FixupInstruction, ParsableInstruction, EncodableInstruction, Patch};
-use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::line_ending;
-use nom::branch::alt;
-use nom::combinator::map;
-use nom::sequence::{preceded, terminated, delimited};
-use std::collections::HashSet;
-use crate::OperandPatches;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Addressing {
     Immediate8,

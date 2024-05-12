@@ -1,5 +1,5 @@
-use bitvec::prelude::*;
-use super::{Operand, ParsableInstruction, EncodableInstruction, DecodableInstruction};
+use super::DecodableInstruction;
+use super::parse::{Operand, ParsableInstruction};
 use core::convert::Infallible;
 use core::mem;
 
@@ -8,10 +8,12 @@ fn b3_to_u8(b1: bool, b2: bool, b3: bool) -> u8 {
     b1 as u8 * 0b100 | b2 as u8 * 0b010 | b3 as u8 * 0b001
 }
 
+#[cfg(feature = "encode")]
 fn l(val: u16) -> u8 {
     (val & 0xff) as u8
 }
 
+#[cfg(feature = "encode")]
 fn b(val: u16) -> u8 {
     ((val & 0xff00) >> 8) as u8
 }
@@ -39,6 +41,7 @@ pub enum Reg {
 }
 
 impl Reg {
+    #[inline]
     fn from_byte(byte: u8) -> Reg {
         if byte & 0b1000 != 0 {
             panic!()
@@ -46,8 +49,9 @@ impl Reg {
             unsafe { mem::transmute(byte) }
         }
     }
-    fn from_bits(b1: bool, b2: bool, b3: bool) -> Reg {
-        Reg::from_byte(b3_to_u8(b1, b2, b3))
+    #[inline]
+    fn from_bits(b1: u8, b2: u8, b3: u8) -> Reg {
+        Reg::from_byte(b3_to_u8(b1 != 0, b2 != 0, b3 != 0))
     }
     #[inline(always)]
     pub fn to_dst_byte(self) -> u8 {
@@ -75,14 +79,17 @@ pub enum RegPair {
 }
 
 impl RegPair {
-    fn from_bits(b1: bool, b2: bool) -> RegPair {
-        match (b1, b2) {
+    #[inline]
+    fn from_bits(b1: u8, b2: u8) -> RegPair {
+        match (b1 != 0, b2 != 0) {
             (false, false) => Self::Bc,
             (false, true) => Self::De,
             (true, false) => Self::Hl,
             (true, true) => Self::Sp,
         }
     }
+    #[inline]
+    #[cfg(feature = "encode")]
     fn to_byte(self) -> u8 {
         (self as u8) << 4
     }
@@ -137,8 +144,9 @@ pub enum Condition {
 }
 
 impl Condition {
-    fn from_bits(b1: bool, b2: bool, b3: bool) -> Condition {
-        let byte = b3_to_u8(b1, b2, b3);
+    #[inline]
+    fn from_bits(b1: u8, b2: u8, b3: u8) -> Condition {
+        let byte = b3_to_u8(b1 != 0, b2 != 0, b3 != 0);
         if byte & 0b1000 != 0 {
             panic!()
         } else {
@@ -278,7 +286,8 @@ pub enum Instruction {
     Nop,
 }
 
-impl EncodableInstruction for Instruction {
+#[cfg(feature = "encode")]
+impl super::EncodableInstruction for Instruction {
     fn len(&self) -> usize {
         self.len()
     }
@@ -358,7 +367,7 @@ impl DecodableInstruction for Instruction {
 
 impl Instruction {
     #[inline(always)]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         use Instruction::*;
         match self {
             Hlt | Mov(..) | Xchg | Add(..) | Adc(..) | Sub(..) | Sbb(..) | Inr(..) | Dcr(..)
@@ -373,21 +382,30 @@ impl Instruction {
     }
     #[inline]
     pub fn decode_from(bytes: &[u8]) -> Self {
+        //const t: bool = true;
+        //const f: bool = false;
         use Instruction::*;
-        let b = bytes[0].view_bits::<Msb0>();
-        let bits = (
-            b[0] as u8, b[1] as u8, b[2] as u8, b[3] as u8, b[4] as u8, b[5] as u8, b[6] as u8,
-            b[7] as u8,
+        //let b = bytes[0].view_bits::<Msb0>();
+        //let bits = (
+        //    b[0] as u8, b[1] as u8, b[2] as u8, b[3] as u8, b[4] as u8, b[5] as u8, b[6] as u8,
+        //    b[7] as u8,
+        //);
+        let bit = |v: u8, num: u8| -> u8 {
+            ((v & (0x1 << num)) != 0) as u8
+        };
+        let b = (
+            bit(bytes[0], 7), bit(bytes[0], 6), bit(bytes[0], 5), bit(bytes[0], 4),
+            bit(bytes[0], 3), bit(bytes[0], 2), bit(bytes[0], 1), bit(bytes[0], 0),
         );
 
-        let dst = Reg::from_bits(b[2], b[3], b[4]);
-        let src = Reg::from_bits(b[5], b[6], b[7]);
-        let rp = RegPair::from_bits(b[2], b[3]);
+        let dst = Reg::from_bits(b.2, b.3, b.4);
+        let src = Reg::from_bits(b.5, b.6, b.7);
+        let rp = RegPair::from_bits(b.2, b.3);
         let op = bytes[1];
         let op16 = u16::from_le_bytes([bytes[1], bytes[2]]);
-        let cond = Condition::from_bits(b[2], b[3], b[4]);
+        let cond = Condition::from_bits(b.2, b.3, b.4);
 
-        match bits {
+        match b {
             (0, 1, 1, 1, 0, 1, 1, 0) => Hlt,
             (0, 1, _, _, _, _, _, _) => Mov(dst, src),
             (0, 0, _, _, _, 1, 1, 0) => Mvi(dst, op),

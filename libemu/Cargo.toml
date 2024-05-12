@@ -1,0 +1,12 @@
+[package]
+name = "libemu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+asane = { path = "../asane", default-features = false, features = ["alloc"] }
+cassette = "0.3.0"
+
+[features]
+std = []
+default = ["std"]

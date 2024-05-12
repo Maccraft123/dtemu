@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-asm-playground = { version = "0.1.0", path = "../asm-playground" }
+asm-playground = { path = "../asm-playground", features = ["alloc"], default-features = false }
 bitfield-struct = "0.6.1"
-futures-lite = { version = "2.3.0", default-features = false, features = ["std"] }
+cassette = "0.3.0"
 static_assertions = "1.1.0"
 
 [profile.dev]
@@ -17,3 +17,8 @@ opt-level = 3
 
 [profile.release]
 opt-level = 3
+
+[features]
+alloc = []
+cycle_stepping = []
+default = ["alloc", "cycle_stepping"]

@@ -10,5 +10,5 @@ members = [
 	"cartridge",
 	"readcart",
 	"asane",
-	"paracpm",
+	"paracpm", "libemu-crossterm", "libemu", "libemu-3ds", "libemu-psp",
 ]

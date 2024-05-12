@@ -1,13 +1,29 @@
+#![no_std]
+#[cfg(feature = "alloc")]
+extern crate alloc;
+
 pub mod intel8085;
 
 use static_assertions::const_assert_eq;
 use core::fmt;
+use core::future::Future;
 
 mod cpu_prelude {
-    pub use crate::{Bus, BusRo, BusWo, Cpu, TwoBytes};
+    pub use crate::{Bus, BusRead, BusWrite, Cpu, TwoBytes, yield_for};
     pub use bitfield_struct::bitfield;
-    pub use futures_lite::future::yield_now;
 }
+
+#[cfg(feature = "cycle_stepping")]
+#[inline]
+pub async fn yield_for(mut amount: u8) {
+    while amount > 0 {
+        amount -= 1;
+        cassette::yield_now().await;
+    }
+}
+#[cfg(not(feature = "cycle_stepping"))]
+#[inline(always)]
+pub async fn yield_for(_: u8) {}
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -112,6 +128,7 @@ mod tests {
 }
 
 impl fmt::Debug for TwoBytes {
+    #[inline]
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("TwoBytes")
             .field("hi", &self.hi())
@@ -121,12 +138,13 @@ impl fmt::Debug for TwoBytes {
 }
 
 impl PartialEq for TwoBytes {
+    #[inline]
     fn eq(&self, other: &TwoBytes) -> bool {
         self.word() == other.word()
     }
 }
 
-pub trait BusRo<Address: UnsignedInteger>: Send + Sync {
+pub trait BusRead<Address: UnsignedInteger>: Send + Sync {
     fn read8(&self, _: Address) -> u8;
     #[inline(always)]
     fn read16le(&self, a: Address) -> u16 {
@@ -137,7 +155,7 @@ pub trait BusRo<Address: UnsignedInteger>: Send + Sync {
     }
 }
 
-pub trait BusWo<Address: UnsignedInteger>: Send + Sync {
+pub trait BusWrite<Address: UnsignedInteger>: Send + Sync {
     fn write8(&mut self, _: Address, _: u8);
     #[inline(always)]
     fn write16le(&mut self, a: Address, v: u16) {
@@ -147,38 +165,47 @@ pub trait BusWo<Address: UnsignedInteger>: Send + Sync {
     }
 }
 
-pub trait Bus<Address: UnsignedInteger>: BusWo<Address> + BusRo<Address> {}
-impl<Address: UnsignedInteger, T: BusRo<Address> + BusWo<Address>> Bus<Address> for T {}
+pub trait Bus<Address: UnsignedInteger>: BusWrite<Address> + BusRead<Address> {}
+impl<Address: UnsignedInteger, T: BusRead<Address> + BusWrite<Address>> Bus<Address> for T {}
 
-impl<T: UnsignedInteger> BusWo<T> for &mut [u8] {
+impl<T: UnsignedInteger, const LEN: usize> BusRead<T> for [u8; LEN] {
+    #[inline(always)]
+    fn read8(&self, addr: T) -> u8 {
+        self[addr.to_usize()]
+    }
+}
+
+impl<T: UnsignedInteger, const LEN: usize> BusWrite<T> for [u8; LEN] {
+    #[inline(always)]
+    fn write8(&mut self, addr: T, val: u8) {
+        self[addr.to_usize()] = val
+    }
+}
+
+impl<T: UnsignedInteger> BusRead<T> for [u8] {
+    #[inline(always)]
+    fn read8(&self, addr: T) -> u8 {
+        self[addr.to_usize()]
+    }
+}
+
+impl<T: UnsignedInteger> BusWrite<T> for [u8] {
     #[inline(always)]
     fn write8(&mut self, addr: T, val: u8) {
         self[addr.to_usize()] = val;
     }
 }
 
-impl<T: UnsignedInteger> BusRo<T> for &mut [u8] {
+#[cfg(feature = "alloc")]
+impl<T: UnsignedInteger> BusRead<T> for alloc::vec::Vec<u8> {
     #[inline(always)]
     fn read8(&self, addr: T) -> u8 {
         self[addr.to_usize()]
     }
 }
 
-impl<T: UnsignedInteger> BusRo<T> for &[u8] {
-    #[inline(always)]
-    fn read8(&self, addr: T) -> u8 {
-        self[addr.to_usize()]
-    }
-}
-
-impl<T: UnsignedInteger> BusRo<T> for Vec<u8> {
-    #[inline(always)]
-    fn read8(&self, addr: T) -> u8 {
-        self[addr.to_usize()]
-    }
-}
-
-impl<T: UnsignedInteger> BusWo<T> for Vec<u8> {
+#[cfg(feature = "alloc")]
+impl<T: UnsignedInteger> BusWrite<T> for alloc::vec::Vec<u8> {
     #[inline(always)]
     fn write8(&mut self, addr: T, val: u8) {
         self[addr.to_usize()] = val
@@ -221,8 +248,30 @@ mod sealed_impl {
 pub trait Cpu: Sized {
     type AddressWidth: UnsignedInteger;
     type Instruction: Sized;
+    /// Returns the program counter
     fn pc(&self) -> Self::AddressWidth;
+    /// Sets the program counter
+    fn set_pc(&mut self, _: Self::AddressWidth);
+    /// Creates a new instance of cpu
     fn new() -> Self;
+    /// Returns the next instruction to be executed
     fn next_instruction(&self, memory: &impl Bus<Self::AddressWidth>) -> Self::Instruction;
-    fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>) -> impl std::future::Future<Output = Self::AddressWidth> + Send;
+    /// Steps one instruction, with every clock cycle represented by polling the future, return
+    /// value being the program counter if `cycle_stepping` feature is enabled
+    fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
+    /// Steps one instruction, retuning a tuple of (program counter, cycles taken), the value of
+    /// cycles taken is reliable if, and only if, feature `cycle_stepping` is enabled
+    #[inline]
+    fn step_instruction_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>) -> (Self::AddressWidth, usize) {
+        use core::pin::pin;
+        let pin = pin!(self.step_instruction(memory));
+        let mut future = cassette::Cassette::new(pin);
+        let mut cycles = 0;
+        loop {
+            cycles += 1;
+            if let Some(pc) = future.poll_on() {
+                return (pc, cycles);
+            }
+        }
+    }
 }

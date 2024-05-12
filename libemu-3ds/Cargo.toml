@@ -1,0 +1,11 @@
+[package]
+name = "libemu-3ds"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ctru-rs = { git = "https://github.com/rust3ds/ctru-rs" }
+libemu = { version = "0.1.0", path = "../libemu" }
+
+[package.metadata.cargo-3ds]
+romfs_dir = "romfs"

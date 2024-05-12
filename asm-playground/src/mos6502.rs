@@ -1,11 +1,19 @@
-use super::{Operand, ParsableOpcode, FixupInstruction, ParsableInstruction, EncodableInstruction, Patch};
-use nom::bytes::complete::{tag, tag_no_case};
-use nom::character::complete::line_ending;
-use nom::branch::alt;
-use nom::combinator::map;
-use nom::sequence::{preceded, terminated, delimited};
+use super::parse::{ParsableOpcode, ParsableInstruction};
+#[cfg(feature = "parse")]
 use std::collections::HashSet;
-use crate::OperandPatches;
+#[cfg(feature = "parse")]
+use super::{
+    EncodableInstruction,
+    parse::{Operand, OperandPatches, FixupInstruction, Patch},
+};
+#[cfg(feature = "parse")]
+use nom::{
+    bytes::complete::{tag, tag_no_case},
+    character::complete::line_ending,
+    branch::alt,
+    combinator::map,
+    sequence::{preceded, terminated, delimited},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Addressing {
@@ -85,6 +93,7 @@ impl Mos6502Operand {
     }
 }
 
+#[cfg(feature = "parse")]
 impl Operand for Mos6502Operand {
     fn set(&mut self, val: f64) {
          match self {
@@ -597,6 +606,7 @@ fn op(addressing: Addressing, bytes: &[u8]) -> Mos6502Operand {
 #[instruction(fixup)]
 pub struct Instruction(Opcode, Mos6502Operand);
 
+#[cfg(feature = "encode")]
 impl FixupInstruction for Instruction {
     fn fixup(&mut self, p: &OperandPatches) {
         match self.0 {
@@ -623,6 +633,7 @@ impl FixupInstruction for Instruction {
     }
 }
 
+#[cfg(feature = "encode")]
 impl EncodableInstruction for Instruction {
     fn len(&self) -> usize {
         use Addressing::*;
@@ -635,7 +646,6 @@ impl EncodableInstruction for Instruction {
     }
     fn encode(&self) -> Vec<u8> {
         let mut ret = Vec::with_capacity(3);
-        println!("{:x?}", self);
         if let Some(b) = self.erase_data().to_u8() {
             ret.push(b);
         } else {
@@ -653,7 +663,7 @@ impl EncodableInstruction for Instruction {
 }
 
 impl Instruction {
-    fn erase_data(&self) -> DatalessInstruction {
+    pub fn erase_data(&self) -> DatalessInstruction {
         DatalessInstruction(self.0, self.1.addressing())
     }
     #[inline]

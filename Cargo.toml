@@ -12,3 +12,6 @@ members = [
 	"asane",
 	"paracpm", "libemu-crossterm", "libemu", "libemu-3ds", "libemu-psp",
 ]
+
+[profile.release]
+debug = true

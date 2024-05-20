@@ -1,14 +1,16 @@
 use asane::intel8085::Intel8080;
+use asane::NoopBus;
 use crate::inner_prelude::*;
+use crate::{KeyboardInput, TerminalOutput};
 
-pub struct CpmMachine<T: Backend> {
+pub struct CpmMachine<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> {
     cpu: Intel8080,
     memory: [u8; 0x10000],
     backend: T,
     cycles: usize,
 }
 
-impl<T: Backend> Machine<T> for CpmMachine<T> {
+impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for CpmMachine<T> {
     #[inline]
     fn cycles(&self) -> usize {
         self.cycles
@@ -43,7 +45,7 @@ impl<T: Backend> Machine<T> for CpmMachine<T> {
         if self.backend.should_exit() {
             return Ok(false)
         }
-        let (pc, cycles) = self.cpu.step_instruction_sync(&mut self.memory);
+        let (pc, cycles) = self.cpu.step_instruction_sync(&mut self.memory, &mut NoopBus(0));
         self.cycles += cycles;
         match pc {
             0x0 => return Ok(false),
@@ -55,19 +57,19 @@ impl<T: Backend> Machine<T> for CpmMachine<T> {
                 match self.cpu.reg(&self.memory, Reg::C) {
                     0 => return Ok(false),
                     1 => {
-                        let ch = self.backend.read_key()?;
-                        self.backend.write_key(ch)?;
+                        let ch = self.backend.i().read_key()?;
+                        self.backend.o().write_key(ch)?;
                         self.cpu.set_reg(&mut self.memory, Reg::A, ch.try_into().unwrap());
                         self.cpu.set_reg(&mut self.memory, Reg::L, ch.try_into().unwrap());
                     },
-                    2 => self.backend.write_key(self.cpu.reg(&self.memory, Reg::E).into())?,
+                    2 => self.backend.o().write_key(self.cpu.reg(&self.memory, Reg::E).into())?,
                     6 => {
                         match self.cpu.reg(&self.memory, Reg::E) {
                             0xff => {
-                                let ch = self.backend.read_key()?;
+                                let ch = self.backend.i().read_key()?;
                                 self.cpu.set_reg(&mut self.memory, Reg::A, ch.try_into().unwrap());
                             },
-                            ch => self.backend.write_key(ch.into())?,
+                            ch => self.backend.o().write_key(ch.into())?,
                         }
                     },
                     9 => {
@@ -77,10 +79,10 @@ impl<T: Backend> Machine<T> for CpmMachine<T> {
                             .map(|v| *v as char)
                             .take_while(|v| *v != '$')
                             .map(|v| v.into());
-                        self.backend.write_iter(string)?;
+                        self.backend.o().write_iter(string)?;
                     },
                     11 => {
-                        let ch = self.backend.has_key()? as u8;
+                        let ch = self.backend.i().has_key()? as u8;
                         self.cpu.set_reg(&mut self.memory, Reg::A, ch);
                         self.cpu.set_reg(&mut self.memory, Reg::L, ch);
                     },

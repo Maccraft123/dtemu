@@ -13,17 +13,19 @@ mod cpu_prelude {
     pub use bitfield_struct::bitfield;
 }
 
-#[cfg(feature = "cycle_stepping")]
-#[inline]
-pub async fn yield_for(mut amount: u8) {
-    while amount > 0 {
-        amount -= 1;
-        cassette::yield_now().await;
+#[macro_export]
+macro_rules! yield_for {
+    ($num: expr) => {
+        #[cfg(feature = "cycle_stepping")]
+        {
+            let mut amount = $num;
+            while amount > 0 {
+                amount -= 1;
+                cassette::yield_now().await;
+            }
+        }
     }
 }
-#[cfg(not(feature = "cycle_stepping"))]
-#[inline(always)]
-pub async fn yield_for(_: u8) {}
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -168,6 +170,36 @@ pub trait BusWrite<Address: UnsignedInteger>: Send + Sync {
 pub trait Bus<Address: UnsignedInteger>: BusWrite<Address> + BusRead<Address> {}
 impl<Address: UnsignedInteger, T: BusRead<Address> + BusWrite<Address>> Bus<Address> for T {}
 
+/// A "no-op" bus implementation that ignores any writes and on reads returns value stored in self.0
+pub struct NoopBus(pub u8);
+
+impl<T: UnsignedInteger> BusRead<T> for NoopBus {
+    #[inline(always)]
+    fn read8(&self, _: T) -> u8 {
+        self.0
+    }
+}
+
+impl<T: UnsignedInteger> BusWrite<T> for NoopBus {
+    #[inline(always)]
+    fn write8(&mut self, _: T, _: u8) {
+    }
+}
+
+impl BusRead<()> for () {
+    #[inline(always)]
+    fn read8(&self, _: ()) -> u8 {
+        panic!()
+    }
+}
+
+impl BusWrite<()> for () {
+    #[inline(always)]
+    fn write8(&mut self, _: (), _: u8) {
+        panic!()
+    }
+}
+
 impl<T: UnsignedInteger, const LEN: usize> BusRead<T> for [u8; LEN] {
     #[inline(always)]
     fn read8(&self, addr: T) -> u8 {
@@ -221,6 +253,9 @@ pub trait UnsignedInteger: sealed_impl::Sealed + Sized + Copy {
     }
 }
 
+pub trait OptionalUnsignedInteger: UnsignedInteger {}
+impl<T: UnsignedInteger> OptionalUnsignedInteger for T {}
+
 macro_rules! impl_unsigned_int {
     ($u: ty) => {
         impl UnsignedInteger for $u {
@@ -237,16 +272,28 @@ impl_unsigned_int!(u16);
 impl_unsigned_int!(u32);
 impl_unsigned_int!(u64);
 
+impl UnsignedInteger for () {
+    fn to_usize(self) -> usize {
+        panic!()
+    }
+    fn from_usize(_: usize) {
+        panic!()
+    }
+}
+
 mod sealed_impl {
     pub trait Sealed {}
     impl Sealed for u8 {}
     impl Sealed for u16 {}
     impl Sealed for u32 {}
     impl Sealed for u64 {}
+    impl Sealed for () {}
 }
 
 pub trait Cpu: Sized {
     type AddressWidth: UnsignedInteger;
+    type IoAddressWidth: OptionalUnsignedInteger;
+    type Interrupt: Sized;
     type Instruction: Sized;
     /// Returns the program counter
     fn pc(&self) -> Self::AddressWidth;
@@ -258,13 +305,27 @@ pub trait Cpu: Sized {
     fn next_instruction(&self, memory: &impl Bus<Self::AddressWidth>) -> Self::Instruction;
     /// Steps one instruction, with every clock cycle represented by polling the future, return
     /// value being the program counter if `cycle_stepping` feature is enabled
-    fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
+    fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
     /// Steps one instruction, retuning a tuple of (program counter, cycles taken), the value of
     /// cycles taken is reliable if, and only if, feature `cycle_stepping` is enabled
     #[inline]
-    fn step_instruction_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>) -> (Self::AddressWidth, usize) {
+    fn step_instruction_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
         use core::pin::pin;
-        let pin = pin!(self.step_instruction(memory));
+        let pin = pin!(self.step_instruction(memory, io));
+        let mut future = cassette::Cassette::new(pin);
+        let mut cycles = 0;
+        loop {
+            cycles += 1;
+            if let Some(pc) = future.poll_on() {
+                return (pc, cycles);
+            }
+        }
+    }
+    fn irq(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
+    #[inline]
+    fn irq_sync(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
+        use core::pin::pin;
+        let pin = pin!(self.step_instruction(memory, io));
         let mut future = cassette::Cassette::new(pin);
         let mut cycles = 0;
         loop {

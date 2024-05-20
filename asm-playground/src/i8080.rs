@@ -1,12 +1,4 @@
-use super::DecodableInstruction;
 use super::parse::{Operand, ParsableInstruction};
-use core::convert::Infallible;
-use core::mem;
-
-// MSB first
-fn b3_to_u8(b1: bool, b2: bool, b3: bool) -> u8 {
-    b1 as u8 * 0b100 | b2 as u8 * 0b010 | b3 as u8 * 0b001
-}
 
 #[cfg(feature = "encode")]
 fn l(val: u16) -> u8 {
@@ -41,18 +33,6 @@ pub enum Reg {
 }
 
 impl Reg {
-    #[inline]
-    fn from_byte(byte: u8) -> Reg {
-        if byte & 0b1000 != 0 {
-            panic!()
-        } else {
-            unsafe { mem::transmute(byte) }
-        }
-    }
-    #[inline]
-    fn from_bits(b1: u8, b2: u8, b3: u8) -> Reg {
-        Reg::from_byte(b3_to_u8(b1 != 0, b2 != 0, b3 != 0))
-    }
     #[inline(always)]
     pub fn to_dst_byte(self) -> u8 {
         (self as u8) << 3
@@ -79,15 +59,6 @@ pub enum RegPair {
 }
 
 impl RegPair {
-    #[inline]
-    fn from_bits(b1: u8, b2: u8) -> RegPair {
-        match (b1 != 0, b2 != 0) {
-            (false, false) => Self::Bc,
-            (false, true) => Self::De,
-            (true, false) => Self::Hl,
-            (true, true) => Self::Sp,
-        }
-    }
     #[inline]
     #[cfg(feature = "encode")]
     fn to_byte(self) -> u8 {
@@ -144,15 +115,6 @@ pub enum Condition {
 }
 
 impl Condition {
-    #[inline]
-    fn from_bits(b1: u8, b2: u8, b3: u8) -> Condition {
-        let byte = b3_to_u8(b1 != 0, b2 != 0, b3 != 0);
-        if byte & 0b1000 != 0 {
-            panic!()
-        } else {
-            unsafe { mem::transmute(byte) }
-        }
-    }
     #[inline(always)]
     pub fn to_byte(self) -> u8 {
         (self as u8) << 3

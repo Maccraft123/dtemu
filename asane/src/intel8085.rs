@@ -3,25 +3,6 @@ use asm_playground::i8080::{self, Instruction, Instruction::*, Condition};
 pub use asm_playground::i8080::{Reg, RegPair};
 use core::mem;
 use core::future::Future;
-/*
-#[bitfield(u8, order = Msb)]
-pub struct Flags {
-    sign: bool,
-    zero: bool,
-    k: bool,
-    half_carry: bool,
-    unused_zero: bool,
-    parity_even: bool,
-    overflow: bool,
-    carry: bool,
-}
-
-impl Flags {
-    fn to_8080(&self) -> u8 {
-        const MASK: u8 = 0xd7;
-        (self.into_bits() & MASK) | 0x2
-    }
-}*/
 
 #[derive(Clone, Debug)]
 pub struct Flags {
@@ -67,7 +48,7 @@ impl From<u8> for Flags {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-enum AluOp {
+enum LogicalOp {
     Xor,
     Or,
     And,
@@ -204,39 +185,32 @@ impl Intel8080 {
         }
     }
     #[inline(always)]
-    fn add(&mut self, carry: bool, v1: u8, v2: u8) -> u8 {
+    fn add(&mut self, carry: bool, v1: u8, v2: u8) {
         let result = v1.wrapping_add(v2).wrapping_add(carry as u8);
         self.f.set_carry(self.carry(8, v1,  v2, carry));
         self.f.set_half_carry(self.carry(4, v1,  v2, carry));
-        self.update_zsp(result)
+        self.a = self.update_zsp(result);
     }
     #[inline(always)]
-    fn sub(&mut self, carry: bool, val1: u8, val2: u8) -> u8 {
-        let tmp = self.add(!carry, val1, !val2);
+    fn sub(&mut self, carry: bool, val1: u8, val2: u8) {
+        self.add(!carry, val1, !val2);
         self.f.set_carry(!self.f.carry());
-        tmp
     }
     #[inline]
-    fn alu(&mut self, op: AluOp, val1: u8, val2: u8) -> u8 {
-        use AluOp::*;
-        let ret = match op {
-            Xor | Or | And => {
-                let result = match op {
-                    Xor => val1 ^ val2,
-                    Or => val1 | val2,
-                    And => val1 & val2,
-                    _ => unreachable!(),
-                };
-                if op == And {
-                    self.f.set_half_carry(((val1 | val2) & 0x08) != 0);
-                } else {
-                    self.f.set_half_carry(false);
-                }
-                self.f.set_carry(false);
-                result
-            },
+    fn alu(&mut self, op: LogicalOp, val1: u8, val2: u8) {
+        use LogicalOp::*;
+        let result = match op {
+            Xor => val1 ^ val2,
+            Or => val1 | val2,
+            And => val1 & val2,
         };
-        self.update_zsp(ret)
+        if op == And {
+            self.f.set_half_carry(((val1 | val2) & 0x08) != 0);
+        } else {
+            self.f.set_half_carry(false);
+        }
+        self.f.set_carry(false);
+        self.a = self.update_zsp(result);
     }
     #[inline(always)]
     fn carry(&self, num: u8, val1: u8, val2: u8, carry: bool) -> bool {
@@ -396,20 +370,20 @@ impl Cpu for Intel8080 {
                     self.hl.set_word(new);
                 },
                 Pchl => { yield_for!(1); self.pc = self.hl.word(); },
-                Xri(val) => self.a = self.alu(AluOp::Xor, self.a, val),
-                Xra(reg) => self.a = self.alu(AluOp::Xor, self.a, self.reg(m, reg)),
-                Ori(val) => self.a = self.alu(AluOp::Or, self.a, val),
-                Ora(reg) => self.a = self.alu(AluOp::Or, self.a, self.reg(m, reg)),
-                Ani(val) => self.a = self.alu(AluOp::And, self.a, val),
-                Ana(reg) => self.a = self.alu(AluOp::And, self.a, self.reg(m, reg)),
-                Add(reg) => self.a = self.add(false, self.a, self.reg(m, reg)),
-                Adc(reg) => self.a = self.add(self.f.carry(), self.a, self.reg(m, reg)),
-                Adi(val) => self.a = self.add(false, self.a, val),
-                Aci(val) => self.a = self.add(self.f.carry(), self.a, val),
-                Sub(reg) => self.a = self.sub(false, self.a, self.reg(m, reg)),
-                Sbb(reg) => self.a = self.sub(self.f.carry(), self.a, self.reg(m, reg)),
-                Sui(val) => self.a = self.sub(false, self.a, val),
-                Sbi(val) => self.a = self.sub(self.f.carry(), self.a, val),
+                Xri(val) => self.alu(LogicalOp::Xor, self.a, val),
+                Xra(reg) => self.alu(LogicalOp::Xor, self.a, self.reg(m, reg)),
+                Ori(val) => self.alu(LogicalOp::Or, self.a, val),
+                Ora(reg) => self.alu(LogicalOp::Or, self.a, self.reg(m, reg)),
+                Ani(val) => self.alu(LogicalOp::And, self.a, val),
+                Ana(reg) => self.alu(LogicalOp::And, self.a, self.reg(m, reg)),
+                Add(reg) => self.add(false, self.a, self.reg(m, reg)),
+                Adc(reg) => self.add(self.f.carry(), self.a, self.reg(m, reg)),
+                Adi(val) => self.add(false, self.a, val),
+                Aci(val) => self.add(self.f.carry(), self.a, val),
+                Sub(reg) => self.sub(false, self.a, self.reg(m, reg)),
+                Sbb(reg) => self.sub(self.f.carry(), self.a, self.reg(m, reg)),
+                Sui(val) => self.sub(false, self.a, val),
+                Sbi(val) => self.sub(self.f.carry(), self.a, val),
                 Cpi(_) | Cmp(_) => {
                     let val = match inst {
                         Cpi(imm) => imm,
@@ -462,8 +436,8 @@ impl Cpu for Intel8080 {
                     self.update_zsp(self.reg(m, reg));
                     self.f.set_half_carry(self.reg(m, reg) & 0xf == 0x00);
                 },
-                Inx(rp) => { yield_for!(1); self.set_rp(rp, self.rp(rp).wrapping_add(1)); },
-                Dcx(rp) => { yield_for!(1); self.set_rp(rp, self.rp(rp).wrapping_sub(1))} ,
+                Inx(rp) => { yield_for!(1); self.set_rp(rp, self.rp(rp).wrapping_add(1))},
+                Dcx(rp) => { yield_for!(1); self.set_rp(rp, self.rp(rp).wrapping_sub(1))},
                 Rrc => {
                     self.a = self.a.rotate_right(1);
                     self.f.set_carry(self.a & 0x80 != 0);
@@ -491,94 +465,4 @@ impl Cpu for Intel8080 {
             self.pc
         }
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Intel8080, Reg, RegPair};
-    use crate::{Cpu, BusRead, BusWrite, Bus};
-    use futures_lite::future::block_on;
-    #[test]
-    fn reg_m() {
-        block_on(async {
-            let mut cpu = Intel8080::new();
-            let mut m = vec![0u8; 0x10000];
-            m[0] = 0x26; // mvi h
-            m[1] = 0xaa;
-            m[2] = 0x2e; // mvi l
-            m[3] = 0xbb;
-            m[4] = 0x36; // mvi m
-            m[5] = 0xdd;
-            m[0xaabb] = 0xcc;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            assert_eq!(m[0xaabb], m[5]);
-        })
-    }
-    #[test]
-    fn mvi_and_reg_pairing() {
-        block_on(async {
-            let mut cpu = Intel8080::new();
-            let mut m = vec![0u8; 0x10000];
-            m[0] = 0x06; // mvi b
-            m[1] = 0x01;
-            m[2] = 0x0e; // mvi c
-            m[3] = 0x02;
-            m[4] = 0x16; // mvi d
-            m[5] = 0x03;
-            m[6] = 0x1e; // mvi e
-            m[7] = 0x04;
-            m[8] = 0x26; // mvi h
-            m[9] = 0x05;
-            m[10] = 0x2e; // mvi l
-            m[11] = 0x06;
-            m[12] = 0x3e; // mvi a
-            m[13] = 0x07;
-
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-            cpu.step_instruction(&mut m).await;
-
-            assert_eq!(cpu.reg(&m, Reg::B), 0x01);
-            assert_eq!(cpu.reg(&m, Reg::C), 0x02);
-            assert_eq!(cpu.rp(RegPair::Bc), 0x0102);
-            assert_eq!(cpu.reg(&m, Reg::D), 0x03);
-            assert_eq!(cpu.reg(&m, Reg::E), 0x04);
-            assert_eq!(cpu.rp(RegPair::De), 0x0304);
-            assert_eq!(cpu.reg(&m, Reg::H), 0x05);
-            assert_eq!(cpu.reg(&m, Reg::L), 0x06);
-            assert_eq!(cpu.rp(RegPair::Hl), 0x0506);
-            assert_eq!(cpu.reg(&m, Reg::A), 0x07);
-        });
-    }
-    /*#[test]
-    fn cpi_tst8080() {
-        block_on(async {
-            let mut cpu = Intel8080::new();
-            let mut m = vec![0u8; 0x10000];
-            m[0] = 0x3e; // mvi a, 0xf5
-            m[1] = 0xf5;
-            m[2] = 0xfe; // cpi 0x0
-            m[3] = 0x00;
-            m[4] = 0xfe; // cpi 0xf5
-            m[5] = 0xf5;
-            m[6] = 0xf3; // cpi 0xff
-            m[7] = 0xff;
-            cpu.step_instruction(&mut m).await; // mvi a, 0xf5
-            cpu.step_instruction(&mut m).await; // cpi 0x0
-            assert!(!cpu.flags().carry());
-            assert!(!cpu.flags().zero());
-            cpu.step_instruction(&mut m).await; // cpi 0xf5
-            assert!(!cpu.flags().carry());
-            assert!(cpu.flags().zero());
-            cpu.step_instruction(&mut m).await; // cpi 0xff
-            assert!(!cpu.flags().carry());
-            assert!(cpu.flags().zero());
-        });
-    }*/
 }

@@ -10,7 +10,6 @@ use core::future::Future;
 
 mod cpu_prelude {
     pub use crate::{Bus, BusRead, BusWrite, Cpu, TwoBytes, yield_for};
-    pub use bitfield_struct::bitfield;
 }
 
 #[macro_export]

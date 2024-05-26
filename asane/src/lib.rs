@@ -185,20 +185,6 @@ impl<T: UnsignedInteger> BusWrite<T> for NoopBus {
     }
 }
 
-impl BusRead<()> for () {
-    #[inline(always)]
-    fn read8(&self, _: ()) -> u8 {
-        panic!()
-    }
-}
-
-impl BusWrite<()> for () {
-    #[inline(always)]
-    fn write8(&mut self, _: (), _: u8) {
-        panic!()
-    }
-}
-
 impl<T: UnsignedInteger, const LEN: usize> BusRead<T> for [u8; LEN] {
     #[inline(always)]
     fn read8(&self, addr: T) -> u8 {
@@ -227,7 +213,7 @@ impl<T: UnsignedInteger> BusWrite<T> for [u8] {
     }
 }
 
-#[cfg(feature = "alloc")]
+/*#[cfg(feature = "alloc")]
 impl<T: UnsignedInteger> BusRead<T> for alloc::vec::Vec<u8> {
     #[inline(always)]
     fn read8(&self, addr: T) -> u8 {
@@ -241,7 +227,7 @@ impl<T: UnsignedInteger> BusWrite<T> for alloc::vec::Vec<u8> {
     fn write8(&mut self, addr: T, val: u8) {
         self[addr.to_usize()] = val
     }
-}
+}*/
 
 pub trait UnsignedInteger: sealed_impl::Sealed + Sized + Copy {
     fn to_usize(self) -> usize;

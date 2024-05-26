@@ -13,7 +13,15 @@ members = [
 	"paracpm", "libemu-crossterm", "libemu", "libemu-3ds", "libemu-psp",
 ]
 
+[profile.dev]
+debug = "full"
+codegen-units = 2
+opt-level = 3
+lto = false
+
 [profile.release]
-debug = true
+debug = "full"
 codegen-units = 1
-opt-level = 2
+opt-level = 3
+lto = "fat"
+panic = "abort"

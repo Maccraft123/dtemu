@@ -41,7 +41,7 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
                 return Ok(false)
             }
             // 2x faster on ryzen 6900hs than not doing this
-            for _ in 0..=0xff {
+            for _ in 0..=0xffff {
                 let pc = self.cpu.step_instruction(&mut self.memory, &mut NoopBus(0)).await;
                 match pc {
                     0x0 => return Ok(false),

@@ -5,6 +5,7 @@ use std::io::{self, Write, StdoutLock};
 use std::path::PathBuf;
 use std::fs;
 use std::collections::VecDeque;
+use std::num::NonZeroU8;
 
 use crossterm::event::{self, KeyCode, Event, KeyModifiers};
 use libemu::{Backend, Machine, Key, TerminalOutput, KeyboardInput};
@@ -16,6 +17,8 @@ struct Args {
     program: PathBuf,
     #[arg(short, long)]
     debug: bool,
+    #[arg(short, long, default_value = "1")]
+    bench: NonZeroU8,
 }
 
 struct CrosstermBackend {
@@ -156,10 +159,18 @@ fn main() {
     let args = Args::parse();
     let prog = fs::read(&args.program)
         .unwrap();
-    let backend = CrosstermBackend::new(prog);
-    let mut machine = CpmMachine::new(backend);
-    let start = Instant::now();
+    let mut times = Vec::new();
+
+    for _ in 0..(args.bench.get()) {
+        let start = Instant::now();
+        let backend = CrosstermBackend::new(prog.clone());
+        let mut machine = CpmMachine::new(backend);
     
-    while machine.tick().unwrap() {}
-    print!("\r\nExecution time: {:.3}s\r\n", start.elapsed().as_secs_f32());
+        while machine.tick().unwrap() {}
+        times.push(start.elapsed().as_secs_f32());
+    }
+    let sum = times.iter()
+        .fold(0f32, |v1, v2| v1 + v2);
+    let average = sum/args.bench.get() as f32;
+    println!("Average execution time: {:.3}s", average);
 }

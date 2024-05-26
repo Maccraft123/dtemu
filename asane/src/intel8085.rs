@@ -138,7 +138,7 @@ impl Intel8080 {
             Sp => self.sp = val,
         }
     }
-    #[inline]
+    #[inline(always)]
     fn update_zsp(&mut self, val: u8) -> u8 {
         self.f.set_zero(val == 0);
         self.f.set_sign(val & 0x80 != 0);
@@ -162,7 +162,7 @@ impl Intel8080 {
     async fn pop16(&mut self, mem: &mut impl BusRead<u16>) -> u16 {
         yield_for!(6);
         let val = mem.read16le(self.sp);
-        self.sp += 2;
+        self.sp = self.sp.wrapping_add(2);
         val
     }
     #[inline]
@@ -186,14 +186,12 @@ impl Intel8080 {
     }
     #[inline]
     fn add(&mut self, carry: bool, v1: u8, v2: u8) {
+        // a lil bit faster than u8 math
         let result = v1 as usize + v2 as usize + carry as usize;
         self.f.set_carry(result > 0xff);
+        //self.f.set_half_carry((v1 & 0x0f) + (v2 & 0x0f) + (carry as u8) > 0x0f);
         self.f.set_half_carry(self.carry(4, v1,  v2, carry));
         self.a = self.update_zsp(result as u8);
-        //let result = v1.wrapping_add(v2).wrapping_add(carry as u8);
-        //self.f.set_carry(self.carry(8, v1,  v2, carry));
-        //self.f.set_half_carry(self.carry(4, v1,  v2, carry));
-        //self.a = self.update_zsp(result);
     }
     #[inline]
     fn sub(&mut self, carry: bool, val1: u8, val2: u8) {
@@ -218,8 +216,8 @@ impl Intel8080 {
     }
     #[inline(always)]
     fn carry(&self, num: u8, val1: u8, val2: u8, carry: bool) -> bool {
-        let result = val1 as u16 + val2 as u16 + carry as u16;
-        let carry = result ^ val1 as u16 ^ val2 as u16;
+        let result = val1 as usize + val2 as usize + carry as usize;
+        let carry = result ^ val1 as usize ^ val2 as usize;
         (carry & (1 << num)) != 0
     }
     #[inline]

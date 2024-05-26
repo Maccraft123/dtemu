@@ -305,12 +305,18 @@ pub trait Cpu: Sized {
     /// Steps one instruction, with every clock cycle represented by polling the future, return
     /// value being the program counter if `cycle_stepping` feature is enabled
     fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
-    /// Steps one instruction, retuning a tuple of (program counter, cycles taken), the value of
+    /// Steps `num` instructions, retuning a tuple of (program counter, cycles taken), the value of
     /// cycles taken is reliable if, and only if, feature `cycle_stepping` is enabled
     #[inline]
-    fn step_instruction_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
+    fn step_instructions_sync(&mut self, num: usize, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
         use core::pin::pin;
-        let pin = pin!(self.step_instruction(memory, io));
+        let pin = pin!(async {
+            let mut pc = self.step_instruction(memory, io).await;
+            for _ in 0..=num {
+                pc = self.step_instruction(memory, io).await;
+            }
+            pc
+        });
         let mut future = cassette::Cassette::new(pin);
         let mut cycles = 0;
         loop {
@@ -319,6 +325,12 @@ pub trait Cpu: Sized {
                 return (pc, cycles);
             }
         }
+    }
+    /// Steps one instruction, retuning a tuple of (program counter, cycles taken), the value of
+    /// cycles taken is reliable if, and only if, feature `cycle_stepping` is enabled
+    #[inline]
+    fn step_instruction_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
+        self.step_instructions_sync(1, memory, io)
     }
     fn irq(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
     #[inline]

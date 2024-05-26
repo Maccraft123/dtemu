@@ -1,6 +1,6 @@
 use clap::Parser;
 
-use std::time::Duration;
+use std::time::{Instant, Duration};
 use std::io::{self, Write, StdoutLock};
 use std::path::PathBuf;
 use std::fs;
@@ -158,5 +158,8 @@ fn main() {
         .unwrap();
     let backend = CrosstermBackend::new(prog);
     let mut machine = CpmMachine::new(backend);
+    let start = Instant::now();
+    
     while machine.tick().unwrap() {}
+    print!("\r\nExecution time: {:.3}s\r\n", start.elapsed().as_secs_f32());
 }

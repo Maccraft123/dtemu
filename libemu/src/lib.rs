@@ -4,6 +4,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::convert::Infallible;
+use core::future::Future;
 
 mod inner_prelude {
     #[cfg(feature = "std")]
@@ -149,17 +150,18 @@ impl From<bool> for Rgb888 {
 
 pub trait FramebufferOutput {
     type Error: Error + 'static;
-    type Color: Into<Rgb888>;
-    fn blit_pixel(&mut self, _: Self::Color, _: (u16, u16)) -> Result<(), Self::Error>;
+    fn blit_pixel(&mut self, _: Rgb888, _: (u16, u16)) -> Result<(), Self::Error>;
     fn set_resolution(&mut self, _: (usize, usize)) -> Result<(), Self::Error>;
+    fn refresh(&mut self) -> Result<(), Self::Error>;
 }
 
 pub trait Machine<T: Backend> {
     fn new(_: T) -> Self where Self: Sized;
-    /// Runs a 'tick' of the machine, usually a single CPU instruction, however that is
-    /// implementation-defined. The returned `bool` is the "should the application quit" value.
+    /// Runs a 'tick' of the machine, which is an undefined period of time, usually less than some
+    /// milliseconds..
+    /// The returned `bool` is the "should the application quit" value.
     /// i.e. `while machine.tick()? {}` is enough of a main loop for most cases
     fn tick(&mut self) -> Result<bool, Box<dyn Error>>;
-    /// Returns the amount of clock cycles the machine executed
-    fn cycles(&self) -> usize;
+    // Returns the amount of clock cycles the machine executed
+    //fn cycles(&self) -> usize;
 }

@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 asane = { path = "../asane", default-features = false, features = ["alloc"] }
 cassette = "0.3.0"
+thingbuf = { version = "0.1.6", features = ["static"], default-features = false }
 
 [features]
 std = []

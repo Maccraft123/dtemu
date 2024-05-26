@@ -167,7 +167,7 @@ impl Intel8080 {
     }
     #[inline]
     async fn push16(&mut self, mem: &mut impl BusWrite<u16>, val: u16) {
-        self.sp -= 2;
+        self.sp = self.sp.wrapping_sub(2);
         mem.write16le(self.sp, val);
         yield_for!(6);
     }
@@ -184,14 +184,18 @@ impl Intel8080 {
             Condition::Minus => self.f.sign(),
         }
     }
-    #[inline(always)]
+    #[inline]
     fn add(&mut self, carry: bool, v1: u8, v2: u8) {
-        let result = v1.wrapping_add(v2).wrapping_add(carry as u8);
-        self.f.set_carry(self.carry(8, v1,  v2, carry));
+        let result = v1 as usize + v2 as usize + carry as usize;
+        self.f.set_carry(result > 0xff);
         self.f.set_half_carry(self.carry(4, v1,  v2, carry));
-        self.a = self.update_zsp(result);
+        self.a = self.update_zsp(result as u8);
+        //let result = v1.wrapping_add(v2).wrapping_add(carry as u8);
+        //self.f.set_carry(self.carry(8, v1,  v2, carry));
+        //self.f.set_half_carry(self.carry(4, v1,  v2, carry));
+        //self.a = self.update_zsp(result);
     }
-    #[inline(always)]
+    #[inline]
     fn sub(&mut self, carry: bool, val1: u8, val2: u8) {
         self.add(!carry, val1, !val2);
         self.f.set_carry(!self.f.carry());
@@ -289,7 +293,7 @@ impl Cpu for Intel8080 {
             pc: 0x0,
             sp: 0x0,
             a: 0x0,
-            f: Flags::from(0x02),
+            f: 0x0.into(),
             bc: TwoBytes::zeroed(),
             de: TwoBytes::zeroed(),
             hl: TwoBytes::zeroed(),

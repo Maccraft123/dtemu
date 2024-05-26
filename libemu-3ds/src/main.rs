@@ -1,6 +1,6 @@
 use ctru::prelude::*;
 
-use libemu::{Backend, Machine, Key};
+use libemu::{Backend, Machine, Key, BrokenKeyboard, TerminalOutput};
 use libemu::cpm::CpmMachine;
 use std::convert::Infallible;
 use std::path::PathBuf;
@@ -35,20 +35,39 @@ unsafe fn gfx_mut() -> &'static mut Gfx {
 struct CtrBackend<'screen> {
     program: Vec<u8>,
     quit: bool,
+    out: CtrOutput<'screen>,
+}
+
+impl<'screen> Backend for CtrBackend<'screen> {
+    type Input = BrokenKeyboard;
+    type Output = CtrOutput<'screen>;
+    fn should_exit(&mut self) -> bool {
+        unsafe {
+            //hid_mut().scan_input();
+            //let keys = hid_mut().keys_held();
+            //!(apt().main_loop()) || self.quit || keys.contains(KeyPad::START)
+        }
+        false
+    }
+    fn request_firmware(&mut self, _: &str) -> Vec<u8> {
+        self.program.clone()
+    }
+    fn i(&mut self) -> &mut Self::Input {
+        BrokenKeyboard::ref_mut()
+    }
+    fn o<'a>(&'a mut self) -> &'a mut CtrOutput<'screen> {
+        &mut self.out
+    }
+}
+
+struct CtrOutput<'screen> {
     bottom: Console<'screen>,
     top: Console<'screen>,
 }
 
-impl<'screen> Backend for CtrBackend<'screen> {
-    type TtyError = Infallible;
-    fn should_exit(&mut self) -> bool {
-        unsafe {
-            hid_mut().scan_input();
-            let keys = hid_mut().keys_held();
-            !(apt().main_loop()) || self.quit || keys.contains(KeyPad::START)
-        }
-    }
-    fn write_key(&mut self, k: Key) -> Result<(), Self::TtyError> {
+impl<'screen> TerminalOutput for CtrOutput<'screen> {
+    type Error = Infallible;
+    fn write_key(&mut self, k: Key) -> Result<(), Self::Error> {
         self.top.select();
         match k {
             Key::Character(ch) => print!("{}", ch),
@@ -56,16 +75,7 @@ impl<'screen> Backend for CtrBackend<'screen> {
         }
         Ok(())
     }
-    fn read_key(&mut self) -> Result<Key, Self::TtyError> {
-        todo!("keyboard")
-    }
-    fn poll_key(&mut self) -> Result<Option<Key>, Self::TtyError> {
-        todo!("keyboard")
-    }
-    fn peek_key(&mut self) -> Result<Option<Key>, Self::TtyError> {
-        todo!("keyboard")
-    }
-    fn request_firmware(&mut self, name: &str) -> Vec<u8> {
+    /*fn request_firmware(&mut self, name: &str) -> Vec<u8> {
         self.bottom.select();
         let prompt = format!("Select file for '{}'\r", name);
         println!("{prompt}");
@@ -87,7 +97,7 @@ impl<'screen> Backend for CtrBackend<'screen> {
         }
         println!("wooo");
         loop {}
-    }
+    }*/
 }
 
 fn main() {
@@ -109,8 +119,10 @@ fn main() {
     let backend = CtrBackend {
         program: include_bytes!("tst8080.com").to_vec(),
         quit: false,
-        top,
-        bottom,
+        out: CtrOutput {
+            top,
+            bottom,
+        },
     };
     let mut machine = CpmMachine::new(backend);
 

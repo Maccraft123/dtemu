@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 
 use std::time::{Instant, Duration};
 use std::io::{self, Write, StdoutLock};
@@ -10,6 +10,7 @@ use std::num::NonZeroU8;
 use crossterm::event::{self, KeyCode, Event, KeyModifiers};
 use libemu::{Backend, Machine, Key, TerminalOutput, KeyboardInput};
 use libemu::cpm::CpmMachine;
+use libemu::nestrace::Nestrace;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -19,6 +20,31 @@ struct Args {
     debug: bool,
     #[arg(short, long, default_value = "1")]
     bench: NonZeroU8,
+    #[arg(short, long, value_enum)]
+    machine: EmulatedMachine,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+enum EmulatedMachine {
+    Cpm,
+    NesTrace
+}
+
+impl EmulatedMachine {
+    fn run_to_completion(&self, b: impl Backend<Input: KeyboardInput, Output: TerminalOutput>) -> usize {
+        match self {
+            Self::Cpm => {
+                let mut mach = CpmMachine::new(b);
+                while mach.tick().unwrap() {}
+                mach.cycles()
+            },
+            Self::NesTrace => {
+                let mut mach = Nestrace::new(b);
+                while mach.tick().unwrap() {}
+                mach.cycles()
+            },
+        }
+    }
 }
 
 struct CrosstermBackend {
@@ -44,6 +70,7 @@ impl Backend for CrosstermBackend {
     type Output = CrosstermOutput;
     #[inline]
     fn should_exit(&mut self) -> bool {
+        self.i.update_queue().unwrap();
         self.i.seen_ctrlc
     }
     #[inline]
@@ -160,17 +187,23 @@ fn main() {
     let prog = fs::read(&args.program)
         .unwrap();
     let mut times = Vec::new();
+    let mut cycles = 0;
 
     for _ in 0..(args.bench.get()) {
         let start = Instant::now();
         let backend = CrosstermBackend::new(prog.clone());
-        let mut machine = CpmMachine::new(backend);
-    
-        while machine.tick().unwrap() {}
+        cycles += args.machine.run_to_completion(backend);
         times.push(start.elapsed().as_secs_f32());
     }
     let sum = times.iter()
         .fold(0f32, |v1, v2| v1 + v2);
     let average = sum/args.bench.get() as f32;
     println!("Average execution time: {:.3}s", average);
+    println!("Cycles done: {}", cycles);
+    let freq_mhz = (cycles as f32/sum)/1000000f32;
+    if freq_mhz > 1000f32 {
+        println!("Average frequency: {:.4}GHz", freq_mhz/1000f32);
+    } else {
+        println!("Average frequency: {:.4}MHz", freq_mhz);
+    }
 }

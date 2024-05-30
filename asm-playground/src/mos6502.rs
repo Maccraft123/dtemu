@@ -32,6 +32,19 @@ pub enum Addressing {
     ZeroPageY,
 }
 
+impl Addressing {
+    pub fn len(&self) -> u16 {
+        use Addressing::*;
+        match self {
+            Accumulator | Implied => 0,
+            Immediate | Relative |
+                ZeroPage | ZeroPageX | ZeroPageY |
+                Indirect | IndirectX | IndirectY => 1,
+            Absolute | AbsoluteX | AbsoluteY => 2,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Mos6502Operand {
     Accumulator,
@@ -306,7 +319,7 @@ pub enum Opcode {
     Cpy,
     /// Pull flags from stack
     Plp,
-    /// Push flgas to stack
+    /// Push flags to stack
     Php,
     /// Decrement operand
     Dec,
@@ -345,7 +358,7 @@ impl DatalessInstruction {
         //(0x0f, inst!(Slo, Absolute)),
         (0x10, inst!(Bpl, Relative)),
         (0x11, inst!(Ora, IndirectY)),
-        //(0x12, inst!(Jam, Implied)),
+        (0x12, inst!(Jam, Implied)),
         //(0x13, inst!(Slo, IndirectY)),
         //(0x14, inst!(Nop, ZeroPageX)),
         (0x15, inst!(Ora, ZeroPageX)),
@@ -360,8 +373,8 @@ impl DatalessInstruction {
         (0x1e, inst!(Asl, AbsoluteX)),
         //(0x1f, inst!()),
         (0x20, inst!(Jsr, Absolute)),
-        (0x21, inst!(And, ZeroPageX)),
-        //(0x22, inst!(Jam, Implied)),
+        (0x21, inst!(And, IndirectX)),
+        (0x22, inst!(Jam, Implied)),
         //(0x23, inst!()),
         (0x24, inst!(Bit, ZeroPage)),
         (0x25, inst!(And, ZeroPage)),
@@ -376,7 +389,7 @@ impl DatalessInstruction {
         (0x2e, inst!(Rol, Absolute)),
         //(0x2f, inst!()),
         (0x30, inst!(Bmi, Relative)),
-        (0x31, inst!(And, ZeroPageY)),
+        (0x31, inst!(And, IndirectY)),
         (0x32, inst!(Jam, Implied)),
         //(0x33, inst!()),
         //(0x34, inst!()),
@@ -389,10 +402,10 @@ impl DatalessInstruction {
         //(0x3b, inst!()),
         (0x3c, inst!(Nop, Absolute)),
         (0x3d, inst!(Ora, AbsoluteX)),
-        (0x3e, inst!(Asl, AbsoluteX)),
+        (0x3e, inst!(Rol, AbsoluteX)),
         //(0x3f, inst!()),
         (0x40, inst!(Rti, Implied)),
-        (0x41, inst!(Eor, ZeroPageX)),
+        (0x41, inst!(Eor, IndirectX)),
         (0x42, inst!(Jam, Implied)),
         //(0x43, inst!()),
         (0x44, inst!(Nop, ZeroPage)),
@@ -405,10 +418,10 @@ impl DatalessInstruction {
         //(0x4b, inst!()),
         (0x4c, inst!(Jmp, Absolute)),
         (0x4d, inst!(Eor, Absolute)),
-        (0x4e, inst!(Lsr, Accumulator)),
+        (0x4e, inst!(Lsr, Absolute)),
         //(0x4f, inst!()),
         (0x50, inst!(Bvc, Relative)),
-        (0x51, inst!(Eor, ZeroPageY)),
+        (0x51, inst!(Eor, IndirectY)),
         (0x52, inst!(Jam, Implied)),
         //(0x53, 
         //(0x54
@@ -424,7 +437,7 @@ impl DatalessInstruction {
         (0x5e, inst!(Lsr, AbsoluteX)),
         //(0x5f, inst!()),
         (0x60, inst!(Rts, Implied)),
-        (0x61, inst!(Adc, ZeroPageX)),
+        (0x61, inst!(Adc, IndirectX)),
         (0x62, inst!(Jam, Implied)),
         //(0x63, inst!()),
         (0x64, inst!(Nop, ZeroPage)),
@@ -440,7 +453,7 @@ impl DatalessInstruction {
         (0x6e, inst!(Ror, Absolute)),
         //(0x6f, inst!()),
         (0x70, inst!(Bcs, Relative)),
-        (0x71, inst!(Adc, ZeroPageY)),
+        (0x71, inst!(Adc, IndirectY)),
         (0x72, inst!(Jam, Implied)),
         //(0x73, inst!()),
         (0x74, inst!(Nop, ZeroPage)),
@@ -452,7 +465,7 @@ impl DatalessInstruction {
         //(0x7a, inst!(Nop)),
         (0x7d, inst!(Adc, AbsoluteX)),
         (0x7e, inst!(Ror, AbsoluteX)),
-        (0x81, inst!(Sta, ZeroPageX)),
+        (0x81, inst!(Sta, IndirectX)),
         (0x84, inst!(Sty, ZeroPage)),
         (0x85, inst!(Sta, ZeroPage)),
         (0x86, inst!(Stx, ZeroPage)),
@@ -463,8 +476,9 @@ impl DatalessInstruction {
         (0x8d, inst!(Sta, Absolute)),
         (0x8e, inst!(Stx, Absolute)),
         (0x90, inst!(Bcc, Relative)),
-        (0x91, inst!(Sta, ZeroPageY)),
-        (0x94, inst!(Sty, ZeroPage)),
+        (0x91, inst!(Sta, IndirectY)),
+        (0x92, inst!(Jam, Implied)),
+        (0x94, inst!(Sty, ZeroPageX)),
         (0x95, inst!(Sta, ZeroPageX)),
         (0x96, inst!(Stx, ZeroPageY)),
         (0x98, inst!(Tya, Implied)),
@@ -472,7 +486,7 @@ impl DatalessInstruction {
         (0x9a, inst!(Txs, Implied)),
         (0x9d, inst!(Sta, AbsoluteX)),
         (0xa0, inst!(Ldy, Immediate)),
-        (0xa1, inst!(Lda, ZeroPageX)),
+        (0xa1, inst!(Lda, IndirectX)),
         (0xa2, inst!(Ldx, Immediate)),
         (0xa4, inst!(Ldy, ZeroPage)),
         (0xa5, inst!(Lda, ZeroPage)),
@@ -485,7 +499,8 @@ impl DatalessInstruction {
         (0xae, inst!(Ldx, Absolute)),
         (0xb0, inst!(Bcs, Relative)),
         (0xb1, inst!(Lda, IndirectY)),
-        (0xb4, inst!(Ldy, ZeroPage)),
+        (0xb2, inst!(Jam, Implied)),
+        (0xb4, inst!(Ldy, ZeroPageX)),
         (0xb5, inst!(Lda, ZeroPageX)),
         (0xb6, inst!(Ldx, ZeroPageY)),
         (0xb8, inst!(Clv, Implied)),
@@ -495,7 +510,7 @@ impl DatalessInstruction {
         (0xbd, inst!(Lda, AbsoluteX)),
         (0xbe, inst!(Ldx, AbsoluteY)),
         (0xc0, inst!(Cpy, Immediate)),
-        (0xc1, inst!(Cmp, ZeroPageX)),
+        (0xc1, inst!(Cmp, IndirectX)),
         (0xc4, inst!(Cpy, ZeroPage)),
         (0xc5, inst!(Cmp, ZeroPage)),
         (0xc6, inst!(Dec, ZeroPage)),
@@ -506,7 +521,8 @@ impl DatalessInstruction {
         (0xcd, inst!(Cmp, Absolute)),
         (0xce, inst!(Dec, Absolute)),
         (0xd0, inst!(Bne, Relative)),
-        (0xd1, inst!(Cmp, ZeroPageY)),
+        (0xd1, inst!(Cmp, IndirectY)),
+        (0xd2, inst!(Jam, Implied)),
         (0xd5, inst!(Cmp, ZeroPageX)),
         (0xd6, inst!(Dec, ZeroPageX)),
         (0xd8, inst!(Cld, Implied)),
@@ -514,19 +530,20 @@ impl DatalessInstruction {
         (0xdd, inst!(Cmp, AbsoluteX)),
         (0xde, inst!(Dec, AbsoluteX)),
         (0xe0, inst!(Cpx, Immediate)),
-        (0xe1, inst!(Sbc, ZeroPageX)),
+        (0xe1, inst!(Sbc, IndirectX)),
         (0xe4, inst!(Cpx, ZeroPage)),
         (0xe5, inst!(Sbc, ZeroPage)),
         (0xe6, inst!(Inc, ZeroPage)),
         (0xe8, inst!(Inx, Implied)),
         (0xe9, inst!(Sbc, Immediate)),
         (0xea, inst!(Nop, Implied)),
-        //(0xeb, inst!(Sbc, Immediate)),
+        (0xeb, inst!(Sbc, Immediate)),
         (0xec, inst!(Cpx, Absolute)),
         (0xed, inst!(Sbc, Absolute)),
         (0xee, inst!(Inc, Absolute)),
         (0xf0, inst!(Beq, Relative)),
-        (0xf1, inst!(Sbc, ZeroPageY)),
+        (0xf1, inst!(Sbc, IndirectY)),
+        (0xf2, inst!(Jam, Implied)),
         (0xf5, inst!(Sbc, ZeroPageX)),
         (0xf6, inst!(Inc, ZeroPageX)),
         (0xf8, inst!(Sed, Implied)),
@@ -536,13 +553,13 @@ impl DatalessInstruction {
     ];
     
     #[inline]
-    pub fn from_u8(val: u8) -> Option<Self> {
+    pub fn from_u8(val: u8) -> Result<Self, u8> {
         for (i, ret) in Self::LUT {
             if val == *i {
-                return Some(ret.clone())
+                return Ok(ret.clone())
             }
         }
-        None
+        Err(val)
     }
 
     #[inline]
@@ -572,13 +589,7 @@ impl DatalessInstruction {
 
     #[inline(always)]
     pub fn len(&self) -> u16 {
-        use Addressing::*;
-        match self.1 {
-        Accumulator | Implied => 1,
-        Immediate | Relative | ZeroPage | ZeroPageX | ZeroPageY => 2,
-        Absolute | AbsoluteX | AbsoluteY |
-            Indirect | IndirectX | IndirectY => 3,
-        }
+        self.1.len() + 1
     }
 }
 

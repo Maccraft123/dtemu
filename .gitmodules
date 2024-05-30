@@ -1,3 +1,9 @@
 [submodule "yarer"]
 	path = yarer
 	url = https://github.com/Maccraft123/yarer
+[submodule "asane/tests/hmc-6502"]
+	path = asane/tests/hmc-6502
+	url = https://github.com/cminter/hmc-6502
+[submodule "asane/tests/neskell"]
+	path = asane/tests/neskell
+	url = https://github.com/blitzcode/neskell

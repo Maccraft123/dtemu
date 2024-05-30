@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-asane = { path = "../asane", default-features = false, features = ["alloc"] }
+asane = { path = "../asane", default-features = false, features = ["alloc", "cycle_counting"] }
+cartridge = { version = "0.1.0", path = "../cartridge" }
 cassette = "0.3.0"
 thingbuf = { version = "0.1.6", features = ["static"], default-features = false }
 
 [features]
 std = []
+nightly = ["asane/nightly"]
 default = ["std"]

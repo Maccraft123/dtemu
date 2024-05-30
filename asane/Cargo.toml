@@ -21,4 +21,9 @@ opt-level = 3
 [features]
 alloc = []
 cycle_stepping = []
-default = ["alloc", "cycle_stepping"]
+cycle_counting = []
+nightly = []
+default = ["alloc", "cycle_counting"]
+
+[dev-dependencies]
+hex = "0.4.3"

@@ -1,19 +1,44 @@
 #![no_std]
-#[cfg(feature = "alloc")]
+
+#![allow(clippy::unused_async)]
+#[cfg(any(feature = "alloc", test))]
 extern crate alloc;
 
 pub mod intel8085;
+pub mod mos6502;
 
 use static_assertions::const_assert_eq;
 use core::fmt;
+use core::convert::Infallible;
 use core::future::Future;
 
 mod cpu_prelude {
-    pub use crate::{Bus, BusRead, BusWrite, Cpu, TwoBytes, yield_for};
+    pub use crate::{Bus, BusRead, BusWrite, Cpu, TwoBytes, cycles, define_cycles, take_cycles};
+    pub use core::future::Future;
+}
+
+#[cfg(not(feature = "cycle_counting"))]
+#[macro_export]
+macro_rules! take_cycles {
+    () => { 0 }
+}
+
+#[cfg(feature = "cycle_counting")]
+#[macro_export]
+macro_rules! take_cycles {
+    () => { CYCLES.swap(0, core::sync::atomic::Ordering::Relaxed) }
 }
 
 #[macro_export]
-macro_rules! yield_for {
+macro_rules! define_cycles {
+    () => {
+        #[cfg(feature = "cycle_counting")]
+        static CYCLES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+    }
+}
+
+#[macro_export]
+macro_rules! cycles {
     ($num: expr) => {
         #[cfg(feature = "cycle_stepping")]
         {
@@ -22,6 +47,10 @@ macro_rules! yield_for {
                 amount -= 1;
                 cassette::yield_now().await;
             }
+        }
+        #[cfg(feature = "cycle_counting")]
+        {
+            CYCLES.fetch_add($num as usize, core::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -169,6 +198,20 @@ pub trait BusWrite<Address: UnsignedInteger>: Send + Sync {
 pub trait Bus<Address: UnsignedInteger>: BusWrite<Address> + BusRead<Address> {}
 impl<Address: UnsignedInteger, T: BusRead<Address> + BusWrite<Address>> Bus<Address> for T {}
 
+impl BusRead<Infallible> for () {
+    #[inline(always)]
+    fn read8(&self, _: Infallible) -> u8 {
+        unreachable!()
+    }
+}
+
+impl BusWrite<Infallible> for () {
+    #[inline(always)]
+    fn write8(&mut self, _: Infallible, _: u8) {
+        unreachable!()
+    }
+}
+
 /// A "no-op" bus implementation that ignores any writes and on reads returns value stored in self.0
 pub struct NoopBus(pub u8);
 
@@ -244,8 +287,10 @@ impl<T: UnsignedInteger> OptionalUnsignedInteger for T {}
 macro_rules! impl_unsigned_int {
     ($u: ty) => {
         impl UnsignedInteger for $u {
+            #[allow(clippy::cast_possible_truncation)]
             #[inline(always)]
             fn to_usize(self) -> usize { self as usize }
+            #[allow(clippy::cast_possible_truncation)]
             #[inline(always)]
             fn from_usize(v: usize) -> Self { v as Self }
         }
@@ -257,11 +302,11 @@ impl_unsigned_int!(u16);
 impl_unsigned_int!(u32);
 impl_unsigned_int!(u64);
 
-impl UnsignedInteger for () {
+impl UnsignedInteger for core::convert::Infallible {
     fn to_usize(self) -> usize {
-        panic!()
+        unreachable!()
     }
-    fn from_usize(_: usize) {
+    fn from_usize(_: usize) -> Self {
         panic!()
     }
 }
@@ -272,7 +317,7 @@ mod sealed_impl {
     impl Sealed for u16 {}
     impl Sealed for u32 {}
     impl Sealed for u64 {}
-    impl Sealed for () {}
+    impl Sealed for core::convert::Infallible {}
 }
 
 pub trait Cpu: Sized {
@@ -285,50 +330,46 @@ pub trait Cpu: Sized {
     /// Sets the program counter
     fn set_pc(&mut self, _: Self::AddressWidth);
     /// Creates a new instance of cpu
-    fn new() -> Self;
+    fn new(memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> Self;
     /// Returns the next instruction to be executed
     fn next_instruction(&self, memory: &impl Bus<Self::AddressWidth>) -> Self::Instruction;
     /// Steps one instruction, with every clock cycle represented by polling the future, return
     /// value being the program counter if `cycle_stepping` feature is enabled
-    fn step_instruction(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
+    fn step_block(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = usize> + Send;
     /// Steps `num` instructions, retuning a tuple of (program counter, cycles taken), the value of
     /// cycles taken is reliable if, and only if, feature `cycle_stepping` is enabled
     #[inline]
-    fn step_instructions_sync(&mut self, num: usize, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
+    fn step_blocks_sync(&mut self, num: usize, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> usize {
         use core::pin::pin;
         let pin = pin!(async {
-            let mut pc = self.step_instruction(memory, io).await;
-            for _ in 0..=num {
-                pc = self.step_instruction(memory, io).await;
+            let mut cycles = self.step_block(memory, io).await;
+            for _ in 1..num {
+                cycles = self.step_block(memory, io).await;
             }
-            pc
+            cycles
         });
         let mut future = cassette::Cassette::new(pin);
-        let mut cycles = 0;
         loop {
-            cycles += 1;
-            if let Some(pc) = future.poll_on() {
-                return (pc, cycles);
+            if let Some(cycles) = future.poll_on() {
+                return cycles;
             }
         }
     }
     /// Steps one instruction, retuning a tuple of (program counter, cycles taken), the value of
     /// cycles taken is reliable if, and only if, feature `cycle_stepping` is enabled
     #[inline]
-    fn step_instruction_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
-        self.step_instructions_sync(1, memory, io)
+    fn step_block_sync(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> usize {
+        self.step_blocks_sync(1, memory, io)
     }
-    fn irq(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = Self::AddressWidth> + Send;
+    fn irq(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = usize> + Send;
     #[inline]
-    fn irq_sync(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> (Self::AddressWidth, usize) {
+    fn irq_sync(&mut self, _: Self::Interrupt, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> usize {
         use core::pin::pin;
-        let pin = pin!(self.step_instruction(memory, io));
+        let pin = pin!(self.step_block(memory, io));
         let mut future = cassette::Cassette::new(pin);
-        let mut cycles = 0;
         loop {
-            cycles += 1;
-            if let Some(pc) = future.poll_on() {
-                return (pc, cycles);
+            if let Some(cycles) = future.poll_on() {
+                return cycles;
             }
         }
     }

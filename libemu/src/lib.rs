@@ -19,6 +19,7 @@ mod inner_prelude {
 use inner_prelude::*;
 
 pub mod cpm;
+//pub mod nestrace;
 //pub mod spaceinvaders;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -114,6 +115,14 @@ pub trait TerminalOutput {
     type Error: Error + 'static;
     /// Writes a character onto the screen
     fn write_key(&mut self, _: Key) -> Result<(), Self::Error>;
+    /// Writes a string to the display
+    #[inline(always)]
+    fn write_string(&mut self, s: &str) -> Result<(), Self::Error> {
+        for ch in s.chars() {
+            self.write_key(ch.into())?;
+        }
+        Ok(())
+    }
     /// Writes every value yielded by an iterator to display
     #[inline(always)]
     fn write_iter(&mut self, iter: impl Iterator<Item = Key>) -> Result<(), Self::Error> {
@@ -162,6 +171,6 @@ pub trait Machine<T: Backend> {
     /// The returned `bool` is the "should the application quit" value.
     /// i.e. `while machine.tick()? {}` is enough of a main loop for most cases
     fn tick(&mut self) -> Result<bool, Box<dyn Error>>;
-    // Returns the amount of clock cycles the machine executed
-    //fn cycles(&self) -> usize;
+    /// Returns the amount of clock cycles the machine executed
+    fn cycles(&self) -> usize;
 }

@@ -7,9 +7,14 @@ pub struct CpmMachine<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> 
     cpu: Intel8080,
     memory: [u8; 0x10000],
     backend: T,
+    cycles: usize,
 }
 
 impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for CpmMachine<T> {
+    #[inline]
+    fn cycles(&self) -> usize {
+        self.cycles
+    }
     #[inline]
     fn new(mut backend: T) -> CpmMachine<T> {
         let mut memory = [0u8; 0x10000];
@@ -28,9 +33,10 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
         memory[0xff02] = 0x00;
         memory[0xff03] = 0x01;
         Self {
-            cpu: Intel8080::new(),
+            cpu: Intel8080::new(&mut memory, &mut NoopBus(0)),
             memory,
             backend,
+            cycles: 0,
         }
     }
     #[inline]
@@ -42,8 +48,8 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
             }
             // 2x faster on ryzen 6900hs than not doing this
             for _ in 0..=0xffff {
-                let pc = self.cpu.step_instruction(&mut self.memory, &mut NoopBus(0)).await;
-                match pc {
+                self.cycles += self.cpu.step_block(&mut self.memory, &mut NoopBus(0)).await;
+                match self.cpu.pc() {
                     0x0 => return Ok(false),
                     0xfe01..=0xfeff | 0xff02..=0xffff=> {
                         panic!("{:x}", self.cpu.pc())

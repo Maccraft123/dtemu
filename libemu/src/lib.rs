@@ -15,11 +15,12 @@ mod inner_prelude {
     //pub use cassette::block_on;
     pub use crate::{Backend, Machine};
     pub use alloc::boxed::Box;
+    pub use alloc::vec::Vec;
 }
 use inner_prelude::*;
 
 pub mod cpm;
-//pub mod nestrace;
+pub mod nestrace;
 //pub mod spaceinvaders;
 
 #[derive(Copy, Clone, Eq, PartialEq)]

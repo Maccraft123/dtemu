@@ -123,6 +123,7 @@ impl Condition {
 
 /// A form of a decoded 8080/8085 instruction that's easy to work with in Rust.
 #[derive(Debug, Clone, PartialEq, Eq, ParsableInstruction)]
+#[repr(u8)]
 pub enum Instruction {
     /// Move register to register
     Mov(Reg, #[instruction(comma)] Reg),

@@ -24,4 +24,4 @@ debug = "full"
 codegen-units = 1
 opt-level = 3
 lto = false
-panic = "abort"
+#panic = "abort"

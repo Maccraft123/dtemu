@@ -107,18 +107,18 @@ impl Cpu for Mos6502 {
         todo!()
     }
     #[inline]
-    fn irq(&mut self, _: Self::Interrupt, _: &mut impl Bus<u16>, _: &mut impl Bus<Infallible>) -> impl Future<Output = usize> + Send {
-        async {
-            todo!()
-        }
+    async fn irq(&mut self, _: Self::Interrupt, _: &mut impl Bus<u16>, _: &mut impl Bus<Infallible>) -> usize {
+        todo!()
     }
     #[inline]
-    fn step_block(&mut self, m: &mut impl Bus<u16>, _: &mut impl Bus<Infallible>) -> impl Future<Output = usize> + Send {
-        async {
+    async fn step_block(&mut self, m: &mut impl Bus<u16>, _: &mut impl Bus<Infallible>) -> (usize, u16) {
             use asm_playground::mos6502::Opcode::*;
             cycles!(1);
             let i = DatalessInstruction::from_u8(m.read8(self.pc)).expect("Failed to decode 6502 instruction");
             self.pc += 1;
+            if i.len() == 1 {
+                let _ = self.rd8(m, self.pc).await;
+            }
             match i.opcode() {
                 // Load/Store/Transfer
                 Lda => self.a = self.load8(m, i.addressing()).await.update_zn(&mut self.flags),
@@ -127,12 +127,12 @@ impl Cpu for Mos6502 {
                 Sta => self.store8(m, i.addressing(), self.a).await,
                 Stx => self.store8(m, i.addressing(), self.x).await,
                 Sty => self.store8(m, i.addressing(), self.y).await,
-                Tax => { cycles!(1); self.x = self.a.update_zn(&mut self.flags); },
-                Tay => { cycles!(1); self.y = self.a.update_zn(&mut self.flags); },
-                Tsx => { cycles!(1); self.x = self.s.update_zn(&mut self.flags); },
-                Txa => { cycles!(1); self.a = self.x.update_zn(&mut self.flags); },
-                Txs => { cycles!(1); self.s = self.x; },
-                Tya => { cycles!(1); self.a = self.y.update_zn(&mut self.flags); },
+                Tax => self.x = self.a.update_zn(&mut self.flags),
+                Tay => self.y = self.a.update_zn(&mut self.flags),
+                Tsx => self.x = self.s.update_zn(&mut self.flags),
+                Txa => self.a = self.x.update_zn(&mut self.flags),
+                Txs => self.s = self.x,
+                Tya => self.a = self.y.update_zn(&mut self.flags),
                 // Stack instructions
                 Pha => self.push8(m, self.a).await,
                 Php => self.push8(m, self.flags.to_stack()).await,
@@ -140,11 +140,11 @@ impl Cpu for Mos6502 {
                 Plp => self.flags = self.pull8(m).await.into(),
                 // Decrements and increments
                 Dec => self.rmw(m, i.addressing(), |_, v| v.wrapping_sub(1)).await,
-                Dex => { cycles!(1); self.x = self.x.wrapping_sub(1).update_zn(&mut self.flags); }
-                Dey => { cycles!(1); self.y = self.y.wrapping_sub(1).update_zn(&mut self.flags); }
+                Dex => self.x = self.x.wrapping_sub(1).update_zn(&mut self.flags),
+                Dey => self.y = self.y.wrapping_sub(1).update_zn(&mut self.flags),
                 Inc => self.rmw(m, i.addressing(), |_, v| v.wrapping_add(1)).await,
-                Inx => { cycles!(1); self.x = self.x.wrapping_add(1).update_zn(&mut self.flags); }
-                Iny => { cycles!(1); self.y = self.y.wrapping_add(1).update_zn(&mut self.flags); }
+                Inx => self.x = self.x.wrapping_add(1).update_zn(&mut self.flags),
+                Iny => self.y = self.y.wrapping_add(1).update_zn(&mut self.flags),
                 // Arithmentic operations
                 Adc => self.rma(m, i.addressing(), Self::adc).await,
                 Sbc => self.rma(m, i.addressing(), Self::sbc).await,
@@ -183,13 +183,13 @@ impl Cpu for Mos6502 {
                     ret
                 }).await,
                 // Flag instructions
-                Clc => { cycles!(1); self.flags.carry = false; }
-                Cld => { cycles!(1); self.flags.decimal = false; }
-                Cli => { cycles!(1); self.flags.irq = false; }
-                Clv => { cycles!(1); self.flags.overflow = false; }
-                Sec => { cycles!(1); self.flags.carry = true; }
-                Sed => { cycles!(1); self.flags.decimal = true; }
-                Sei => { cycles!(1); self.flags.irq = true; }
+                Clc => self.flags.carry = false,
+                Cld => self.flags.decimal = false,
+                Cli => self.flags.irq = false,
+                Clv => self.flags.overflow = false,
+                Sec => self.flags.carry = true,
+                Sed => self.flags.decimal = true,
+                Sei => self.flags.irq = true,
                 // Jumps, subroutines and branches
                 Bcc => self.branch_on(m, !self.flags.carry).await,
                 Bcs => self.branch_on(m, self.flags.carry).await,
@@ -234,11 +234,10 @@ impl Cpu for Mos6502 {
                     self.flags.overflow = v & 0x40 != 0;
                     self.flags.zero = v & self.a == 0;
                 },
-                Nop => { cycles!(1); },
+                Nop => (),
                 Jam => panic!(),
             }
-            take_cycles!()
-        }
+            (take_cycles!(), self.pc)
     }
 }
 
@@ -250,7 +249,11 @@ impl Mos6502 {
     pub fn flags(&self) -> Flags { self.flags.clone() }
     async fn branch_on(&mut self, m: &mut impl Bus<u16>, cond: bool) {
         if cond {
-            self.pc = self.calc_addr(m, Addressing::Relative).await;
+            let target = self.calc_addr(m, Addressing::Relative).await;
+            if target & 0xff00 != self.pc & 0xff00 {
+                cycles!(1);
+            }
+            self.pc = target;
             cycles!(1);
         } else {
             self.pc += 1;
@@ -344,8 +347,14 @@ impl Mos6502 {
         match a {
             Addressing::Immediate   => self.pc,
             Addressing::Absolute    => self.rd16(m, self.pc).await,
-            Addressing::AbsoluteX   => self.rd16(m, self.pc).await + self.x as u16,
-            Addressing::AbsoluteY   => self.rd16(m, self.pc).await + self.y as u16,
+            Addressing::AbsoluteX   => {
+                cycles!(1);
+                self.rd16(m, self.pc).await + self.x as u16
+            },
+            Addressing::AbsoluteY   => {
+                cycles!(1);
+                self.rd16(m, self.pc).await + self.y as u16
+            },
             Addressing::ZeroPage    => self.rd8(m, self.pc).await as u16,
             Addressing::ZeroPageX   => {
                 cycles!(1);
@@ -396,21 +405,21 @@ mod tests {
             }
         }
     }*/
-    fn runhmc(test: &[u8], count: usize, location: u16) -> (Mos6502, [u8; 0x10000]){
+    fn runhmc(test: &[u8], count: usize, location: u16) -> (usize, Mos6502, [u8; 0x10000]){
         let mut memory = [0u8; 0x10000];
         let [lo, hi] = location.to_le_bytes();
         memory[location as usize..][..test.len()].copy_from_slice(test);
         memory[0xfffc] = lo;
         memory[0xfffd] = hi;
         let mut cpu = Mos6502::new(&mut memory, &mut ());
-        cpu.step_instructions_sync(count, &mut memory, &mut ());
+        let cycles = cpu.step_blocks_sync(count, &mut memory, &mut ()).0;
 
-        (cpu, memory)
+        (cycles, cpu, memory)
     }
     #[test]
     fn test00_loadstore() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/load_store_test.bin");
-        let (cpu, memory) = runhmc(rom, 47, 0xe000);
+        let (_, cpu, memory) = runhmc(rom, 47, 0xe000);
         assert_eq!(memory[0x022a], 0x55);
         assert_eq!(cpu.a(), 0x55);
         assert_eq!(cpu.x(), 0x2a);
@@ -419,85 +428,85 @@ mod tests {
     #[test]
     fn test01_andorxor() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/and_or_xor_test.bin");
-        let (_, memory) = runhmc(rom, 109, 0xe000);
+        let (_, _, memory) = runhmc(rom, 109, 0xe000);
         assert_eq!(memory[0xa9], 0xaa);
     }
     #[test]
     fn test02_incdec() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/inc_dec_test.bin");
-        let (_, memory) = runhmc(rom, 34, 0xe000);
+        let (_, _, memory) = runhmc(rom, 34, 0xe000);
         assert_eq!(memory[0x71], 0xff);
     }
     #[test]
     fn test03_bitshifts() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/bitshift_test.bin");
-        let (_, memory) = runhmc(rom, 58, 0xe000);
+        let (_, _, memory) = runhmc(rom, 58, 0xe000);
         assert_eq!(memory[0x1dd], 0x6e);
     }
     #[test]
     fn test04_jumpsret() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/jump_ret_test.bin");
-        let (_, memory) = runhmc(rom, 35, 0x0600);
+        let (_, _, memory) = runhmc(rom, 35, 0x0600);
         assert_eq!(memory[0x40], 0x42);
     }
     #[test]
     fn test05_reginstrs() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/reg_transf_test.bin");
-        let (_, memory) = runhmc(rom, 18, 0xe000);
+        let (_, _, memory) = runhmc(rom, 18, 0xe000);
         assert_eq!(memory[0x40], 0x33);
     }
     #[test]
     fn test06_addsub() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/add_sub_test.bin");
-        let (_, memory) = runhmc(rom, 69, 0xe000);
+        let (_, _, memory) = runhmc(rom, 69, 0xe000);
         assert_eq!(memory[0x30], 0xaa);
     }
     #[test]
     fn test07_cmpbeqbne() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/cmp_beq_bne_test.bin");
-        let (_, memory) = runhmc(rom, 54,  0xe000);
+        let (_, _, memory) = runhmc(rom, 54,  0xe000);
         assert_eq!(memory[0x15], 0x7f);
     }
     #[test]
     fn test08_cpxybit() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/cpx_cpy_bit_test.bin");
-        let (_, memory) = runhmc(rom, 29, 0xe000);
+        let (_, _, memory) = runhmc(rom, 29, 0xe000);
         assert_eq!(memory[0x42], 0xa5);
     }
     #[test]
     fn test09_otherbranches() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/misc_branch_test.bin");
-        let (_, memory) = runhmc(rom, 39, 0xe000);
+        let (_, _, memory) = runhmc(rom, 39, 0xe000);
         assert_eq!(memory[0x80], 0x1f);
     }
     #[test]
     fn test10_flaginstrs() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/flag_test.bin");
-        let (_, memory) = runhmc(rom, 13, 0xe000);
+        let (_, _, memory) = runhmc(rom, 13, 0xe000);
         assert_eq!(memory[0x30], 0xce);
     }
     #[test]
     fn test11_stackinstrs() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/stack_test.bin");
-        let (_, memory) = runhmc(rom, 11, 0xe000);
+        let (_, _, memory) = runhmc(rom, 11, 0xe000);
         assert_eq!(memory[0x30], 0x29);
     }
     #[test]
     fn test12_rti() {
         let rom = include_bytes!("../tests/neskell/src/tests/hmc-6502/rti_test.bin");
-        let (_, memory) = runhmc(rom, 15, 0x0600);
+        let (_, _, memory) = runhmc(rom, 15, 0x0600);
         assert_eq!(memory[0x33], 0x42);
     }
     #[test]
     fn two_plus_two() {
         let rom = &[0xa9, 0x02, 0x69, 0x02];
-        let (cpu, _) = runhmc(rom, 2, 0xe000);
+        let (_, cpu, _) = runhmc(rom, 2, 0xe000);
         assert_eq!(cpu.a(), 0x4);
     }
     #[test]
     fn zero_minus_zero() {
         let rom = &[0x38, 0xa9, 0x00, 0xe9, 0x00];
-        let (cpu, _) = runhmc(rom, 3, 0xe000);
+        let (_, cpu, _) = runhmc(rom, 3, 0xe000);
         assert_eq!(cpu.a(), 0x0);
         assert_eq!(cpu.flags.carry(), true);
         assert_eq!(cpu.flags.zero(), true);
@@ -505,8 +514,15 @@ mod tests {
     #[test]
     fn simple_cmp() {
         let rom = &[0xa9, 0x18, 0xc9, 0x18];
-        let (cpu, _) = runhmc(rom, 2, 0xe000);
+        let (_, cpu, _) = runhmc(rom, 2, 0xe000);
         assert_eq!(cpu.a(), 0x18);
         assert_eq!(cpu.flags.zero(), true);
+    }
+    #[test]
+    fn branch_pagecross_test() {
+        let rom = include_bytes!("../tests/neskell/src/tests/unit/branch_pagecross_test.bin");
+        let (cycles, cpu, _memory) = runhmc(rom, 5, 0x02f9);
+        assert_eq!(cpu.a(), 0xff);
+        assert_eq!(cycles, 14);
     }
 }

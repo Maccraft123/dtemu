@@ -9,7 +9,7 @@ const fn make_zsp_lut() -> [(bool, bool, bool); 0x100] {
     let mut lut = [(false, false, false); 0x100];
     let mut v: usize = 0;
     while v < 0x100 {
-        lut[v as usize] = (
+        lut[v] = (
             v == 0,
             v & 0x80 != 0,
             v.count_ones() % 2 == 0,
@@ -19,7 +19,7 @@ const fn make_zsp_lut() -> [(bool, bool, bool); 0x100] {
     lut
 }
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct Flags {
     sign: bool,
     zero: bool,
@@ -28,16 +28,35 @@ pub struct Flags {
     carry: bool,
 }
 
+/*const fn make_flags_lut() -> [Flags; 0x100] {
+    let mut lut = [Flags { sign: false, zero: false, half_carry: false, parity_even: false, carry: false}; 0x100];
+    let mut v = 0usize;
+    while v < 0x100 {
+        lut[v] = Flags {
+            sign: v & 0x80 != 0,
+            zero: v & 0x40 != 0,
+            half_carry: v & 0x10 != 0,
+            parity_even: v & 0x04 != 0,
+            carry: v & 0x01 != 0,
+        };
+        v += 1;
+    }
+
+    lut
+}
+
+static FLAGS_LUT: [Flags; 0x100] = make_flags_lut();*/
+
 impl Flags {
     #[inline(always)] pub fn to_8080(&self) -> u8 {
-        self.sign as u8 * 0x80 |
-            self.zero as u8 * 0x40 |
-            self.half_carry as u8 * 0x10 |
-            self.parity_even as u8 * 0x04 |
+        (self.sign as u8 * 0x80) |
+            (self.zero as u8 * 0x40) |
+            (self.half_carry as u8 * 0x10) |
+            (self.parity_even as u8 * 0x04) |
             0x02 |
-            self.carry as u8
+            (self.carry as u8)
     }
-    /*#[inline] pub fn sign(&self) -> bool { self.sign }
+    #[inline] pub fn sign(&self) -> bool { self.sign }
     #[inline] pub fn zero(&self) -> bool { self.zero }
     #[inline] pub fn half_carry(&self) -> bool { self.half_carry }
     #[inline] pub fn parity_even(&self) -> bool { self.parity_even }
@@ -46,12 +65,13 @@ impl Flags {
     #[inline] pub fn set_zero(&mut self, val: bool) { self.zero = val }
     #[inline] pub fn set_half_carry(&mut self, val: bool) { self.half_carry = val }
     #[inline] pub fn set_parity_even(&mut self, val: bool) { self.parity_even = val }
-    #[inline] pub fn set_carry(&mut self, val: bool) { self.carry = val }*/
+    #[inline] pub fn set_carry(&mut self, val: bool) { self.carry = val }
 }
 
 impl From<u8> for Flags {
     #[inline(always)]
     fn from(v: u8) -> Self {
+        //FLAGS_LUT[v as usize]
         Self {
             sign: v & 0x80 != 0,
             zero: v & 0x40 != 0,
@@ -147,7 +167,7 @@ impl Intel8080 {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     fn update_zsp(&mut self, val: u8) -> u8 {
         // lol
         static ZSP_LUT: [(bool, bool, bool); 0x100] = make_zsp_lut();
@@ -160,28 +180,24 @@ impl Intel8080 {
     #[inline]
     async fn push8(&mut self, m: &mut impl BusWrite<u16>, v: u8) {
         self.sp = self.sp.wrapping_sub(1);
-        m.write8(self.sp, v);
-        cycles!(3);
+        self.w8(m, self.sp, v).await;
     }
     #[inline]
     async fn pop8(&mut self, m: &mut impl BusRead<u16>) -> u8 {
-        let v = m.read8(self.sp);
+        let v = self.rd8(m, self.sp).await;
         self.sp = self.sp.wrapping_add(1);
-        cycles!(3);
         v
     }
     #[inline]
-    async fn pop16(&mut self, mem: &mut impl BusRead<u16>) -> u16 {
-        cycles!(6);
-        let val = mem.read16le(self.sp);
+    async fn pop16(&mut self, m: &mut impl BusRead<u16>) -> u16 {
+        let val = self.rd16(m, self.sp).await;
         self.sp = self.sp.wrapping_add(2);
         val
     }
     #[inline]
-    async fn push16(&mut self, mem: &mut impl BusWrite<u16>, val: u16) {
+    async fn push16(&mut self, m: &mut impl BusWrite<u16>, val: u16) {
         self.sp = self.sp.wrapping_sub(2);
-        mem.write16le(self.sp, val);
-        cycles!(6);
+        self.w16(m, self.sp, val).await;
     }
     #[inline(always)]
     fn has_cond(&self, cond: Condition) -> bool {
@@ -197,18 +213,19 @@ impl Intel8080 {
         }
     }
     #[inline]
-    fn add(&mut self, carry: bool, v1: u8, v2: u8) {
+    fn add(&mut self, carry: bool, v1: u8, v2: u8) -> u8 {
         // a lil bit faster than u8 math
         let result = v1 as usize + v2 as usize + carry as usize;
         self.f.carry = result > 0xff;
         //self.f.set_half_carry((v1 & 0x0f) + (v2 & 0x0f) + (carry as u8) > 0x0f);
         self.f.half_carry = self.carry(4, v1,  v2, carry);
-        self.a = self.update_zsp(result as u8);
+        self.update_zsp(result as u8)
     }
     #[inline]
-    fn sub(&mut self, carry: bool, val1: u8, val2: u8) {
-        self.add(!carry, val1, !val2);
+    fn sub(&mut self, carry: bool, val1: u8, val2: u8) -> u8 {
+        let ret = self.add(!carry, val1, !val2);
         self.f.carry = !self.f.carry;
+        ret
     }
     #[inline(always)]
     fn xor(&mut self, val1: u8, val2: u8) {
@@ -235,12 +252,13 @@ impl Intel8080 {
         (carry & (1 << num)) != 0
     }
     #[inline]
-    async fn call(&mut self, m: &mut impl Bus<u16>, addr: u16, cond: bool) {
+    async fn call(&mut self, m: &mut impl Bus<u16>, addr: u16, cond: bool) -> bool {
         if cond {
             self.push16(m, self.pc).await;
             self.pc = addr;
         }
         cycles!(1);
+        cond
     }
     #[inline(always)]
     async fn rd8(&self, m: &impl BusRead<u16>, addr: u16) -> u8 {
@@ -264,6 +282,7 @@ impl Intel8080 {
     }
 }
 
+
 impl Cpu for Intel8080 {
     type AddressWidth = u16;
     type IoAddressWidth = u8;
@@ -278,21 +297,19 @@ impl Cpu for Intel8080 {
         self.pc
     }
     #[inline]
-    fn irq(&mut self, num: u8, m: &mut impl Bus<u16>, _: &mut impl Bus<u8>) -> impl Future<Output = usize> + Send {
-        async move {
-            match num {
-                0xc7 => self.call(m, 0x00, true).await,
-                0xcf => self.call(m, 0x08, true).await,
-                0xd7 => self.call(m, 0x10, true).await,
-                0xdf => self.call(m, 0x18, true).await,
-                0xe7 => self.call(m, 0x20, true).await,
-                0xef => self.call(m, 0x28, true).await,
-                0xf7 => self.call(m, 0x30, true).await,
-                0xff => self.call(m, 0x38, true).await,
-                _ => unimplemented!("less hacky way to do 8080 irqs"),
-            }
-            take_cycles!()
+    async fn irq(&mut self, num: u8, m: &mut impl Bus<u16>, _: &mut impl Bus<u8>) -> usize {
+        match num {
+            0xc7 => { self.call(m, 0x00, true).await; },
+            0xcf => { self.call(m, 0x08, true).await; },
+            0xd7 => { self.call(m, 0x10, true).await; },
+            0xdf => { self.call(m, 0x18, true).await; },
+            0xe7 => { self.call(m, 0x20, true).await; },
+            0xef => { self.call(m, 0x28, true).await; },
+            0xf7 => { self.call(m, 0x30, true).await; },
+            0xff => { self.call(m, 0x38, true).await; },
+            _ => unimplemented!("less hacky way to do 8080 irqs"),
         }
+        take_cycles!()
     }
     #[inline]
     fn next_instruction(&self, m: &impl Bus<u16>) -> Self::Instruction {
@@ -312,9 +329,18 @@ impl Cpu for Intel8080 {
         }
     }
     #[inline]
-    fn step_block(&mut self, m: &mut impl Bus<u16>, io: &mut impl Bus<u8>) -> impl Future<Output = usize> + Send {
-        async {
-            let mut _cycles = 0;
+    async fn step_block(&mut self, m: &mut impl Bus<u16>, io: &mut impl Bus<u8>) -> (usize, u16) {
+        macro_rules! set_pc {
+            ($new_pc: expr) => {
+                { self.pc = ($new_pc); return (take_cycles!(), self.pc) }
+            }
+        }
+        macro_rules! brk_if {
+            ($cond: expr) => {
+                { if ($cond) { return (take_cycles!(), self.pc) } }
+            }
+        }
+        loop {
             let bytes = [m.read8(self.pc), m.read8(self.pc+1), m.read8(self.pc+2)];
             let (inst, len) = Instruction::decode_and_len(&bytes);
             self.pc += len as u16;
@@ -322,20 +348,20 @@ impl Cpu for Intel8080 {
             // presumably for decoding
             cycles!(1 + (3*len) as u8);
             match inst {
-                Jmp(addr) => self.pc = addr,
-                Rst(addr) => self.call(m, addr as u16, true).await,
+                Jmp(addr) => set_pc!(addr),
+                Rst(addr) => brk_if!(self.call(m, addr as u16, true).await),
                 J(cond, addr) => {
                     if self.has_cond(cond) {
-                        self.pc = addr;
+                        set_pc!(addr);
                     }
                 },
-                Call(addr) => self.call(m, addr, true).await,
-                C(cond, addr) => self.call(m, addr, self.has_cond(cond)).await,
-                Ret => self.pc = self.pop16(m).await,
+                Call(addr) => brk_if!(self.call(m, addr, true).await),
+                C(cond, addr) => brk_if!(self.call(m, addr, self.has_cond(cond)).await),
+                Ret => set_pc!(self.pop16(m).await),
                 R(cond) => {
                     cycles!(1); // for checking condition?
                     if self.has_cond(cond) {
-                        self.pc = self.pop16(m).await;
+                        set_pc!(self.pop16(m).await);
                     }
                 },
                 Xchg => { cycles!(1); mem::swap(self.de.word_ref_mut(), self.hl.word_ref_mut()); },
@@ -364,11 +390,7 @@ impl Cpu for Intel8080 {
                     cycles!(1);
                     if rp == RegPair::Sp {
                         self.push8(m, self.a).await;
-                        //if false {// if self.is_8080
-                            self.push8(m, self.f.to_8080()).await;
-                        //} else {
-                            //self.push8(m, self.f.to_8085()).await;
-                        //}
+                        self.push8(m, self.f.to_8080()).await;
                     } else {
                         self.push16(m, self.rp(rp)).await;
                     }
@@ -388,34 +410,23 @@ impl Cpu for Intel8080 {
                     self.w16(m, self.sp, self.hl.word()).await;
                     self.hl.set_word(new);
                 },
-                Pchl => { cycles!(1); self.pc = self.hl.word(); },
+                Pchl => { cycles!(1); set_pc!(self.hl.word()); },
                 Xri(val) => self.xor(self.a, val),
                 Xra(reg) => self.xor(self.a, self.reg(m, reg)),
                 Ori(val) => self.or(self.a, val),
                 Ora(reg) => self.or(self.a, self.reg(m, reg)),
                 Ani(val) => self.and(self.a, val),
                 Ana(reg) => self.and(self.a, self.reg(m, reg)),
-                Add(reg) => self.add(false, self.a, self.reg(m, reg)),
-                Adc(reg) => self.add(self.f.carry, self.a, self.reg(m, reg)),
-                Adi(val) => self.add(false, self.a, val),
-                Aci(val) => self.add(self.f.carry, self.a, val),
-                Sub(reg) => self.sub(false, self.a, self.reg(m, reg)),
-                Sbb(reg) => self.sub(self.f.carry, self.a, self.reg(m, reg)),
-                Sui(val) => self.sub(false, self.a, val),
-                Sbi(val) => self.sub(self.f.carry, self.a, val),
-                Cpi(_) | Cmp(_) => {
-                    let val = match inst {
-                        Cpi(imm) => imm,
-                        Cmp(reg) => self.reg(m, reg),
-                        _ => unreachable!(),
-                    };
-                    let (result, carry) = self.a.overflowing_sub(val);
-                    //self.f.set_carry(val > self.a);
-                    self.f.carry = carry;
-                    let carry4 = !(self.a ^ result as u8 ^ val) & 0x10;
-                    self.f.half_carry = carry4 != 0;
-                    self.update_zsp(result as u8);
-                },
+                Add(reg) => self.a = self.add(false, self.a, self.reg(m, reg)),
+                Adc(reg) => self.a = self.add(self.f.carry, self.a, self.reg(m, reg)),
+                Adi(val) => self.a = self.add(false, self.a, val),
+                Aci(val) => self.a = self.add(self.f.carry, self.a, val),
+                Sub(reg) => self.a = self.sub(false, self.a, self.reg(m, reg)),
+                Sbb(reg) => self.a = self.sub(self.f.carry, self.a, self.reg(m, reg)),
+                Sui(val) => self.a = self.sub(false, self.a, val),
+                Sbi(val) => self.a = self.sub(self.f.carry, self.a, val),
+                Cmp(reg) => { self.sub(false, self.a, self.reg(m, reg)); },
+                Cpi(val) => { self.sub(false, self.a, val); },
                 Dad(rp) => {
                     cycles!(6);
                     let result = self.hl.word() as usize + self.rp(rp) as usize;
@@ -424,7 +435,8 @@ impl Cpu for Intel8080 {
                 },
                 Stc => self.f.carry = true,
                 Cmc => self.f.carry = !self.f.carry,
-                Cma => self.a = self.a ^ 0xff,
+                Cma => self.a = !self.a,
+                // i wonder if i can make this into a LUT
                 Daa => {
                     // HEAVILY inspired by https://github.com/GunshipPenguin/lib8080/blob/master/src/i8080.c#L405
                     let mut add = 0;
@@ -439,14 +451,14 @@ impl Cpu for Intel8080 {
                         add |= 0x60;
                         self.f.carry = true;
                     }
-                    self.f.half_carry = (self.a & 0x0F) + (add as u8 & 0x0F) > 0x0F;
+                    self.f.half_carry = (self.a & 0x0F) + (add & 0x0F) > 0x0F;
                     self.a = self.update_zsp(self.a.wrapping_add(add));
                 },
                 Dcr(reg) => {
                     if reg != Reg::M { cycles!(1); }
                     self.sr(m, reg, self.r(m, reg).await.wrapping_sub(1)).await;
                     self.update_zsp(self.reg(m, reg));
-                    self.f.half_carry = !((self.reg(m, reg) & 0xf) == 0xf);
+                    self.f.half_carry = self.reg(m, reg) & 0xf != 0xf;
                 },
                 Inr(reg) => {
                     if reg != Reg::M { cycles!(1); }
@@ -457,11 +469,13 @@ impl Cpu for Intel8080 {
                 Inx(rp) => { cycles!(1); self.set_rp(rp, self.rp(rp).wrapping_add(1))},
                 Dcx(rp) => { cycles!(1); self.set_rp(rp, self.rp(rp).wrapping_sub(1))},
                 Rrc => {
-                    self.a = self.a.rotate_right(1);
+                    self.a = RRC_LUT[self.a as usize];
+                    //self.a = self.a.rotate_right(1);
                     self.f.carry = self.a & 0x80 != 0;
                 },
                 Rlc => {
-                    self.a = self.a.rotate_left(1);
+                    self.a = RLC_LUT[self.a as usize];
+                    //self.a = self.a.rotate_left(1);
                     self.f.carry = self.a & 0x01 != 0;
                 },
                 Rar => {
@@ -477,10 +491,31 @@ impl Cpu for Intel8080 {
                 Di | Ei | Nop => (),
                 In(addr) => self.a = io.read8(addr),
                 Out(addr) => io.write8(addr, self.a),
-                Hlt => self.pc -= 1,
+                Hlt => set_pc!(self.pc - 1),
             }
-
-            take_cycles!()
         }
     }
+}
+
+static RLC_LUT: [u8; 0x100] = make_rlc_lut();
+static RRC_LUT: [u8; 0x100] = make_rrc_lut();
+
+const fn make_rrc_lut() -> [u8; 0x100] {
+    let mut lut = [0u8; 0x100];
+    let mut v = 0usize;
+    while v < 0x100 {
+        lut[v] = (v as u8).rotate_right(1);
+        v += 1;
+    }
+    lut
+}
+
+const fn make_rlc_lut() -> [u8; 0x100] {
+    let mut lut = [0u8; 0x100];
+    let mut v = 0usize;
+    while v < 0x100 {
+        lut[v] = (v as u8).rotate_left(1);
+        v += 1;
+    }
+    lut
 }

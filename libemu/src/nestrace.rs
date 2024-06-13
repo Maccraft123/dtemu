@@ -35,7 +35,7 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Ne
                 return Ok(false)
             }
             for _ in 0..=0xffff {
-                self.cycles += self.cpu.step_block(&mut self.memory, &mut ()).await;
+                self.cycles += self.cpu.step_block(&mut self.memory, &mut ()).await.0;
             }
 
             Ok(true)

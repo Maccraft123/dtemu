@@ -47,9 +47,14 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
                 return Ok(false)
             }
             // 2x faster on ryzen 6900hs than not doing this
-            for _ in 0..=0xffff {
-                self.cycles += self.cpu.step_block(&mut self.memory, &mut NoopBus(0)).await;
-                match self.cpu.pc() {
+            for _ in 0..0xffff {
+                let mut iobus = |access, addr| {
+                    println!("io access {:x?} addr {:x}", access, addr);
+                    0
+                };
+                let (cycles, pc) = self.cpu.step_block(&mut self.memory, &mut iobus).await;
+                self.cycles += cycles;
+                match pc {
                     0x0 => return Ok(false),
                     0xfe01..=0xfeff | 0xff02..=0xffff=> {
                         panic!("{:x}", self.cpu.pc())

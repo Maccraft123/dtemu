@@ -103,7 +103,7 @@ impl Cpu for Mos6502 {
         }
     }
     #[inline]
-    fn next_instruction(&self, _: &impl Bus<u16>) -> Self::Instruction {
+    fn next_instruction(&self, _: &mut impl Bus<u16>) -> Self::Instruction {
         todo!()
     }
     #[inline]

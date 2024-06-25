@@ -117,7 +117,7 @@ impl Intel8080 {
         }
     }
     #[inline(always)]
-    pub fn reg(&self, m: &impl BusRead<u16>, reg: Reg) -> u8 {
+    pub fn reg(&self, m: &mut impl BusRead<u16>, reg: Reg) -> u8 {
         use Reg::*;
         match reg {
             A => self.a,
@@ -132,7 +132,7 @@ impl Intel8080 {
     }
     /// Gets value of an 8080 register, taking 3 cycles for getting M
     #[inline(always)]
-    async fn r(&self, m: &impl BusRead<u16>, reg: Reg) -> u8 {
+    async fn r(&self, m: &mut impl BusRead<u16>, reg: Reg) -> u8 {
         if reg == Reg::M {
             cycles!(3);
         }
@@ -261,12 +261,12 @@ impl Intel8080 {
         cond
     }
     #[inline(always)]
-    async fn rd8(&self, m: &impl BusRead<u16>, addr: u16) -> u8 {
+    async fn rd8(&self, m: &mut impl BusRead<u16>, addr: u16) -> u8 {
         cycles!(3);
         m.read8(addr)
     }
     #[inline(always)]
-    async fn rd16(&self, m: &impl BusRead<u16>, addr: u16) -> u16 {
+    async fn rd16(&self, m: &mut impl BusRead<u16>, addr: u16) -> u16 {
         cycles!(6);
         m.read16le(addr)
     }
@@ -312,7 +312,7 @@ impl Cpu for Intel8080 {
         take_cycles!()
     }
     #[inline]
-    fn next_instruction(&self, m: &impl Bus<u16>) -> Self::Instruction {
+    fn next_instruction(&self, m: &mut impl Bus<u16>) -> Self::Instruction {
         let bytes = [m.read8(self.pc), m.read8(self.pc+1), m.read8(self.pc+2)];
         Instruction::decode_and_len(&bytes).0
     }
@@ -369,7 +369,8 @@ impl Cpu for Intel8080 {
                     if !(src == Reg::M || dst == Reg::M) {
                         cycles!(1);
                     }
-                    self.sr(m, dst, self.r(m, src).await).await;
+                    let tmp = self.r(m, src).await;
+                    self.sr(m, dst, tmp).await;
                 },
                 Mvi(dst, val) => self.sr(m, dst, val).await,
                 Lxi(rp, val) => self.set_rp(rp, val),
@@ -456,13 +457,15 @@ impl Cpu for Intel8080 {
                 },
                 Dcr(reg) => {
                     if reg != Reg::M { cycles!(1); }
-                    self.sr(m, reg, self.r(m, reg).await.wrapping_sub(1)).await;
+                    let v = self.r(m, reg).await.wrapping_sub(1);
+                    self.sr(m, reg, v).await;
                     self.update_zsp(self.reg(m, reg));
                     self.f.half_carry = self.reg(m, reg) & 0xf != 0xf;
                 },
                 Inr(reg) => {
                     if reg != Reg::M { cycles!(1); }
-                    self.sr(m, reg, self.r(m, reg).await.wrapping_add(1)).await;
+                    let v = self.r(m, reg).await.wrapping_add(1);
+                    self.sr(m, reg, v).await;
                     self.update_zsp(self.reg(m, reg));
                     self.f.half_carry = self.reg(m, reg) & 0xf == 0x00;
                 },

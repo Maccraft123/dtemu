@@ -23,6 +23,7 @@ alloc = []
 cycle_stepping = []
 cycle_counting = []
 nightly = []
+std = []
 default = ["alloc", "cycle_counting"]
 
 [dev-dependencies]

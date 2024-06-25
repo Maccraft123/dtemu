@@ -1,5 +1,4 @@
-#![cfg_attr(feature = "nightly", feature(fn_traits))]
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 #![allow(clippy::unused_async)]
 #[cfg(any(feature = "alloc", test))]
@@ -12,8 +11,6 @@ use static_assertions::const_assert_eq;
 use core::fmt;
 use core::convert::Infallible;
 use core::future::Future;
-#[cfg(feature = "nightly")]
-use core::marker::PhantomData;
 
 mod cpu_prelude {
     pub use crate::{Bus, BusRead, BusWrite, Cpu, TwoBytes, cycles, define_cycles, take_cycles};
@@ -28,14 +25,59 @@ macro_rules! take_cycles {
 #[cfg(feature = "cycle_counting")]
 #[macro_export]
 macro_rules! take_cycles {
-    () => { CYCLES.swap(0, core::sync::atomic::Ordering::Relaxed) }
+    () => {
+        CYCLES.take()
+    }
+}
+
+#[cfg(all(feature = "cycle_counting", not(feature = "std")))]
+mod cyclescell {
+    use core::cell::Cell;
+
+    pub(crate) struct CyclesCell {
+        c: Cell<usize>,
+    }
+
+    impl CyclesCell {
+        #[inline(always)]
+        pub(crate) const fn new() -> Self {
+            Self {
+                c: Cell::new(0),
+            }
+        }
+        #[inline(always)]
+        pub(crate) fn take(&'static self) -> usize {
+            unsafe {
+                self.c.take()
+                //let ptr = self.c.get();
+                //let old = *ptr;
+                //*ptr = 0;
+                //old
+            }
+        }
+        #[inline(always)]
+        pub(crate) fn add(&'static self, v: usize) {
+            unsafe {
+                self.c.set(self.c.get() + v);
+                //let ptr = self.c.get();
+                //*ptr = *ptr + v;
+            }
+        }
+    }
+
+    // safe as long as we're poking at it from one thread
+    unsafe impl Sync for CyclesCell {}
 }
 
 #[macro_export]
 macro_rules! define_cycles {
     () => {
-        #[cfg(feature = "cycle_counting")]
-        static CYCLES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+        #[cfg(all(feature = "cycle_counting", feature = "std"))]
+        std::thread_local! { // why is this faster????
+            static CYCLES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }
+        }
+        #[cfg(all(feature = "cycle_counting", not(feature = "std")))]
+        static CYCLES: crate::cyclescell::CyclesCell = crate::cyclescell::CyclesCell::new();
     }
 }
 
@@ -52,7 +94,10 @@ macro_rules! cycles {
         }
         #[cfg(feature = "cycle_counting")]
         {
-            CYCLES.fetch_add($num as usize, core::sync::atomic::Ordering::Relaxed);
+            #[cfg(feature = "std")]
+            CYCLES.set(CYCLES.get() + $num as usize);
+            #[cfg(not(feature = "std"))]
+            CYCLES.add($num as usize);
         }
     }
 }
@@ -177,9 +222,9 @@ impl PartialEq for TwoBytes {
 }
 
 pub trait BusRead<Address: UnsignedInteger> {
-    fn read8(&self, _: Address) -> u8;
+    fn read8(&mut self, _: Address) -> u8;
     #[inline(always)]
-    fn read16le(&self, a: Address) -> u16 {
+    fn read16le(&mut self, a: Address) -> u16 {
         u16::from_le_bytes([
             self.read8(a),
             self.read8(a.off(1)),
@@ -202,7 +247,7 @@ impl<Address: UnsignedInteger, T: BusRead<Address> + BusWrite<Address>> Bus<Addr
 
 impl BusRead<Infallible> for () {
     #[inline(always)]
-    fn read8(&self, _: Infallible) -> u8 {
+    fn read8(&mut self, _: Infallible) -> u8 {
         unreachable!()
     }
 }
@@ -219,7 +264,7 @@ pub struct NoopBus(pub u8);
 
 impl<T: UnsignedInteger> BusRead<T> for NoopBus {
     #[inline(always)]
-    fn read8(&self, _: T) -> u8 {
+    fn read8(&mut self, _: T) -> u8 {
         self.0
     }
 }
@@ -232,7 +277,7 @@ impl<T: UnsignedInteger> BusWrite<T> for NoopBus {
 
 impl<T: UnsignedInteger, const LEN: usize> BusRead<T> for [u8; LEN] {
     #[inline(always)]
-    fn read8(&self, addr: T) -> u8 {
+    fn read8(&mut self, addr: T) -> u8 {
         self[addr.to_usize()]
     }
 }
@@ -246,7 +291,7 @@ impl<T: UnsignedInteger, const LEN: usize> BusWrite<T> for [u8; LEN] {
 
 impl<T: UnsignedInteger> BusRead<T> for [u8] {
     #[inline(always)]
-    fn read8(&self, addr: T) -> u8 {
+    fn read8(&mut self, addr: T) -> u8 {
         self[addr.to_usize()]
     }
 }
@@ -258,26 +303,23 @@ impl<T: UnsignedInteger> BusWrite<T> for [u8] {
     }
 }
 
-#[cfg(feature = "nightly")]
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
 pub enum BusAccess {
     Read,
     Write(u8),
 }
 
-#[cfg(feature = "nightly")]
 impl<T: FnMut(BusAccess, U) -> u8, U: UnsignedInteger> BusWrite<U> for T {
     #[inline(always)]
     fn write8(&mut self, addr: U, value: u8) {
-        self.call_mut((BusAccess::Write(value), addr));
+        self(BusAccess::Write(value), addr);
     }
 }
 
-#[cfg(feature = "nightly")]
-impl<T: Fn(BusAccess, U) -> u8, U: UnsignedInteger> BusRead<U> for T {
+impl<T: FnMut(BusAccess, U) -> u8, U: UnsignedInteger> BusRead<U> for T {
     #[inline(always)]
-    fn read8(&self, addr: U) -> u8 {
-        self.call((BusAccess::Read, addr))
+    fn read8(&mut self, addr: U) -> u8 {
+        self(BusAccess::Read, addr)
     }
 }
 
@@ -357,7 +399,7 @@ pub trait Cpu: Sized {
     /// Creates a new instance of cpu
     fn new(memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> Self;
     /// Returns the next instruction to be executed
-    fn next_instruction(&self, memory: &impl Bus<Self::AddressWidth>) -> Self::Instruction;
+    fn next_instruction(&self, memory: &mut impl Bus<Self::AddressWidth>) -> Self::Instruction;
     /// Steps one instruction, with every clock cycle represented by polling the future, return
     /// value being the (cycles taken, program counter)
     fn step_block(&mut self, memory: &mut impl Bus<Self::AddressWidth>, io: &mut impl Bus<Self::IoAddressWidth>) -> impl Future<Output = (usize, Self::AddressWidth)>;

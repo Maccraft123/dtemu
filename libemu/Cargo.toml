@@ -10,6 +10,6 @@ cassette = "0.3.0"
 thingbuf = { version = "0.1.6", features = ["static"], default-features = false }
 
 [features]
-std = []
+std = ["asane/std"]
 nightly = ["asane/nightly"]
 default = ["std"]

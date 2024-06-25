@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 ctru-rs = { git = "https://github.com/rust3ds/ctru-rs" }
-libemu = { version = "0.1.0", path = "../libemu" }
+libemu = { version = "0.1.0", path = "../libemu", features = [ "std" ] }
 
 [package.metadata.cargo-3ds]
 romfs_dir = "romfs"

@@ -129,7 +129,7 @@ impl NesMemory {
 use asane::{BusWrite, BusRead};
 
 impl BusRead<u16> for NesMemory {
-    fn read8(&self, addr: u16) -> u8 {
+    fn read8(&mut self, addr: u16) -> u8 {
         match addr {
             0x0000..=0x1fff => self.ram[addr as usize & 0x7ff],
             0x2000..=0x3fff => todo!("ppu"),

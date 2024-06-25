@@ -7,4 +7,4 @@ edition = "2021"
 cassette = "0.3.0"
 clap = { version = "4.5.4", features = ["derive"] }
 crossterm = "0.27.0"
-libemu = { path = "../libemu", features = ["nightly"] }
+libemu = { path = "../libemu", features = ["nightly", "std"] }

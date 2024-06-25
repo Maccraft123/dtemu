@@ -48,8 +48,10 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
             }
             // 2x faster on ryzen 6900hs than not doing this
             for _ in 0..0xffff {
+                let mut tmp = asane::BusAccess::Read;
                 let mut iobus = |access, addr| {
                     println!("io access {:x?} addr {:x}", access, addr);
+                    tmp = access;
                     0
                 };
                 let (cycles, pc) = self.cpu.step_block(&mut self.memory, &mut iobus).await;
@@ -61,7 +63,7 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
                     },
                     // bdos call
                     0xfe00 => {
-                        match self.cpu.reg(&self.memory, Reg::C) {
+                        match self.cpu.reg(&mut self.memory, Reg::C) {
                             0 => return Ok(false),
                             1 => {
                                 let ch = self.backend.i().read_key()?;
@@ -69,9 +71,9 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
                                 self.cpu.set_reg(&mut self.memory, Reg::A, ch.try_into().unwrap());
                                 self.cpu.set_reg(&mut self.memory, Reg::L, ch.try_into().unwrap());
                             },
-                            2 => self.backend.o().write_key(self.cpu.reg(&self.memory, Reg::E).into())?,
+                            2 => self.backend.o().write_key(self.cpu.reg(&mut self.memory, Reg::E).into())?,
                             6 => {
-                                match self.cpu.reg(&self.memory, Reg::E) {
+                                match self.cpu.reg(&mut self.memory, Reg::E) {
                                     0xff => {
                                         let ch = self.backend.i().read_key()?;
                                         self.cpu.set_reg(&mut self.memory, Reg::A, ch.try_into().unwrap());

@@ -49,9 +49,7 @@ impl<T: Backend<Input: KeyboardInput, Output: TerminalOutput>> Machine<T> for Cp
             // 2x faster on ryzen 6900hs than not doing this
             for _ in 0..0xffff {
                 let mut tmp = asane::BusAccess::Read;
-                let mut iobus = |access, addr| {
-                    println!("io access {:x?} addr {:x}", access, addr);
-                    tmp = access;
+                let mut iobus = |_, _| {
                     0
                 };
                 let (cycles, pc) = self.cpu.step_block(&mut self.memory, &mut iobus).await;

@@ -252,7 +252,7 @@ pub enum Instruction {
 #[cfg(feature = "encode")]
 impl super::EncodableInstruction for Instruction {
     fn len(&self) -> usize {
-        self.len()
+        panic!("i forgor")
     }
     fn encode(&self) -> Vec<u8> {
         use Instruction::*;

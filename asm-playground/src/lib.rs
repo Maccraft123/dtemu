@@ -6,6 +6,7 @@ extern crate alloc;
 pub mod i8080;
 pub mod mos6502;
 pub mod mc6809;
+pub mod m68k;
 
 #[cfg(feature = "parse")]
 pub mod parse;
